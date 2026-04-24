@@ -7,6 +7,7 @@ import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
 import threading
 
+# ================== CONFIG ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 
@@ -19,25 +20,24 @@ SHOWS = {
 
 DATA_FILE = "last_episodes.json"
 
+# ================== INIT ==================
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ---------------- LOAD / SAVE ----------------
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {}
+# ================== LOAD DATA ==================
+if os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "r") as f:
+        last_episodes = json.load(f)
+else:
+    last_episodes = {}
 
 def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(last_episodes, f)
 
-last_episodes = load_data()
-
-# ---------------- API FETCH ----------------
-def get_latest_episode(show_id):
-    url = f"https://gwapi.zee5.com/content/tvshow/{show_id}?country=IN&translation=en&platform=web"
+# ================== API FUNCTIONS ==================
+def get_season_id(show_id):
+    url = f"https://gwapi.zee5.com/content/tvshow/{show_id}?country=IN&platform=web"
 
     headers = {
         "User-Agent": "Mozilla/5.0",
@@ -46,60 +46,104 @@ def get_latest_episode(show_id):
 
     try:
         r = requests.get(url, headers=headers, timeout=15)
-        if r.status_code != 200:
-            print(f"❌ API failed: {r.status_code}")
-            return None
-
         data = r.json()
 
-        episodes = data.get("episodes", [])
+        seasons = data.get("seasons", [])
+        if not seasons:
+            print("❌ No seasons found")
+            return None
+
+        season_id = seasons[0].get("id")
+        print(f"Season ID: {season_id}")
+        return season_id
+
+    except Exception as e:
+        print("Season error:", e)
+        return None
+
+
+def get_latest_episode(show_id):
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "x-access-token": "guest",
+        "Referer": "https://www.zee5.com/",
+        "Origin": "https://www.zee5.com"
+    }
+
+    season_id = get_season_id(show_id)
+    if not season_id:
+        return None
+
+    url = f"https://gwapi.zee5.com/content/tvshow/?season_id={season_id}&page=1&limit=20&country=IN&platform=web"
+
+    try:
+        r = requests.get(url, headers=headers, timeout=15)
+        data = r.json()
+
+        print("DEBUG keys:", data.keys())
+
+        episodes = data.get("episode") or data.get("episodes")
+
         if not episodes:
             print("❌ No episodes found")
             return None
 
-        latest = episodes[0]  # newest episode
-        episode_id = latest.get("id")
-        title = latest.get("title")
+        # Sort by release_date (latest first)
+        episodes.sort(
+            key=lambda x: x.get("release_date", ""),
+            reverse=True
+        )
 
-        print(f"✅ Latest: {title}")
-        return episode_id, title
+        latest = episodes[0]
+
+        print("Latest:", latest.get("title"))
+
+        return {
+            "id": latest.get("id"),
+            "title": latest.get("title"),
+            "date": latest.get("release_date")
+        }
 
     except Exception as e:
-        print(f"Error: {e}")
+        print("Episode error:", e)
         return None
 
-# ---------------- CHECK ----------------
+
+# ================== CHECKER ==================
 def check_for_new_episodes():
-    print(f"[{time.strftime('%H:%M:%S')}] Checking shows...")
+    print(f"[{time.strftime('%H:%M:%S')}] Checking...")
 
     for key, info in SHOWS.items():
         result = get_latest_episode(info["show_id"])
         if not result:
             continue
 
-        episode_id, title = result
         old_id = last_episodes.get(key)
 
-        if old_id != episode_id:
-            last_episodes[key] = episode_id
+        if old_id != result["id"]:
+            last_episodes[key] = result["id"]
             save_data()
 
-            message = f"""🚨 *NEW EPISODE ALERT!*
+            message = f"""🚨 *NEW EPISODE*
 
-📺 *{info["name"]}*
-🎬 {title}
+📺 {info["name"]}
+🎬 {result["title"]}
+📅 {result["date"]}
 
-🔥 Watch: https://www.zee5.com/tv-shows/details/{key}/{info["show_id"]}"""
+🔥 https://www.zee5.com/tv-shows/details/{key}/{info["show_id"]}
+"""
 
             bot.send_message(ADMIN_CHAT_ID, message, parse_mode="Markdown")
             print("✅ Alert sent")
 
     print("Done\n")
 
-# ---------------- FLASK ----------------
+
+# ================== FLASK ==================
 @app.route('/', methods=['GET'])
 def home():
     return "Bot Running ✅", 200
+
 
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def webhook():
@@ -107,10 +151,12 @@ def webhook():
     bot.process_new_updates([telebot.types.Update.de_json(update)])
     return '', 200
 
-# ---------------- COMMANDS ----------------
+
+# ================== COMMANDS ==================
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "✅ Bot running\n/check → manual check")
+    bot.reply_to(message, "✅ Bot is running\nUse /check to test")
+
 
 @bot.message_handler(commands=['check'])
 def manual_check(message):
@@ -121,13 +167,15 @@ def manual_check(message):
     else:
         bot.reply_to(message, "❌ Owner only")
 
-# ---------------- SCHEDULER ----------------
+
+# ================== SCHEDULER ==================
 def run_scheduler():
     scheduler = BackgroundScheduler()
     scheduler.add_job(check_for_new_episodes, 'interval', minutes=5, max_instances=1)
     scheduler.start()
 
-# ---------------- MAIN ----------------
+
+# ================== MAIN ==================
 if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(1)
