@@ -10,7 +10,7 @@ import threading
 
 # ========================= CONFIG =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
+ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))   # ← This reads from Render
 
 SHOWS = {
     "tumm-se-tumm-tak": {
@@ -44,13 +44,13 @@ def get_latest_episode(show_url):
         r = requests.get(show_url, headers=headers, timeout=15)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, 'html.parser')
-        
+       
         # IMPROVED: Matches current Zee5 structure (E288 22m 23 Apr)
         for h3 in soup.find_all('h3'):
             text = h3.get_text(strip=True)
             if text.startswith('E') and any(c.isdigit() for c in text[:6]):
                 return text[:250]
-        
+       
         # Fallback
         for el in soup.find_all(['h3', 'div', 'p', 'span']):
             txt = el.get_text(strip=True)
@@ -96,10 +96,19 @@ def webhook():
 def start(message):
     bot.reply_to(message, "✅ Zee5 Bot is alive on Render!\n\n/check → manual check")
 
+# ====================== DEBUG CHECK COMMAND ======================
 @bot.message_handler(commands=['check'])
 def manual_check(message):
+    debug_text = f"""🔍 **DEBUG INFORMATION**
+
+Your real chat ID     = {message.chat.id}
+ADMIN_CHAT_ID from Render = {ADMIN_CHAT_ID}
+
+Are these two numbers **exactly the same**?"""
+    bot.reply_to(message, debug_text, parse_mode='Markdown')
+    
     if message.chat.id == ADMIN_CHAT_ID:
-        bot.reply_to(message, "🔄 Checking now...")
+        bot.reply_to(message, "🔄 Checking Zee5 now...")
         check_for_new_episodes()
         bot.reply_to(message, "✅ Check done!")
     else:
@@ -116,8 +125,8 @@ if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(1)
     bot.set_webhook(url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}")
-    
+   
     threading.Thread(target=run_scheduler, daemon=True).start()
-    
+   
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
