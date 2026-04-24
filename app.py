@@ -83,49 +83,26 @@ def get_latest_episode(url):
         return None
 
     soup = BeautifulSoup(html, "html.parser")
+    text = soup.get_text()
 
-    # 🔥 Find Next.js data
-    script = soup.find("script", {"id": "__NEXT_DATA__"})
+    # now JS-loaded content is present
+    matches = re.findall(r'Episode\s*\d+', text, re.IGNORECASE)
 
-    if not script:
-        tg_log("❌ __NEXT_DATA__ not found")
+    if not matches:
+        tg_log("❌ No episode found after JS load")
         return None
 
-    try:
-        data = json.loads(script.string)
+    numbers = [int(re.search(r'\d+', m).group()) for m in matches]
+    latest = max(numbers)
 
-        tg_log("📦 Extracted JSON")
+    episode_text = f"Episode {latest}"
 
-        # 🔍 Navigate structure (dynamic safe parsing)
-        content = json.dumps(data)
+    tg_log(f"🎬 Found: {episode_text}")
 
-        # Find episode numbers in JSON
-        matches = re.findall(r'"episode_number"\s*:\s*(\d+)', content)
-
-        if not matches:
-            # fallback key
-            matches = re.findall(r'"episodeNumber"\s*:\s*(\d+)', content)
-
-        if not matches:
-            tg_log("❌ No episode numbers in JSON")
-            return None
-
-        numbers = [int(x) for x in matches]
-        latest = max(numbers)
-
-        episode_text = f"Episode {latest}"
-
-        tg_log(f"🎬 Found from JSON: {episode_text}")
-
-        return {
-            "id": episode_text,
-            "title": episode_text
-        }
-
-    except Exception as e:
-        tg_log(f"❌ JSON parse error: {e}")
-        return None
-
+    return {
+        "id": episode_text,
+        "title": episode_text
+    }
 # ================= CHECK =================
 def check_for_new_episodes():
     tg_log("🔥 FUNCTION STARTED")
