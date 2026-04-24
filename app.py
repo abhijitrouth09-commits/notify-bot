@@ -67,45 +67,60 @@ def get_latest_episode(show_url):
         r = requests.get(show_url, headers=headers, timeout=15)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, 'html.parser')
-       
-        for h3 in soup.find_all('h3'):
-            text = h3.get_text(strip=True)
-            if text.startswith('E') and any(c.isdigit() for c in text[:6]):
-                return text[:250]
-       
-        for el in soup.find_all(['h3', 'div', 'p', 'span']):
-            txt = el.get_text(strip=True)
-            if any(f"E{num}" in txt for num in range(200, 500)):
-                return txt[:250]
-        return None
+        
+        episode_link = None
+        episode_text = None
+        
+        for card in soup.find_all(['div', 'a'], class_=lambda x: x and ('episode' in str(x).lower() or 'card' in str(x).lower())):
+            a_tag = card.find('a', href=True)
+            if a_tag and '/tv-shows/details/' in a_tag['href']:
+                episode_link = "https://www.zee5.com" + a_tag['href']
+                episode_text = card.get_text(strip=True)[:250]
+                break
+        
+        if not episode_text:
+            for h3 in soup.find_all('h3'):
+                text = h3.get_text(strip=True)
+                if text.startswith('E') and any(c.isdigit() for c in text[:6]):
+                    episode_text = text[:250]
+                    break
+        
+        return episode_text, episode_link
     except Exception as e:
         print("Fetch error:", e)
-        return None
+        return None, None
 
 def check_for_new_episodes():
     global last_episodes
-    print(f"[{time.strftime('%H:%M:%S')}] Checking {len(SHOWS)} Zee5 shows...")
+    print(f"[{time.strftime('%H:%M:%S')}] Checking {len(SHOWS)} shows...")
     for show_key, info in SHOWS.items():
-        latest = get_latest_episode(info["url"])
-        if not latest:
+        latest_text, latest_url = get_latest_episode(info["url"])
+        if not latest_text:
             continue
-        old = last_episodes.get(show_key)
-        if old != latest:
-            last_episodes[show_key] = latest
+            
+        old_text = last_episodes.get(show_key)
+        
+        if old_text != latest_text:
+            last_episodes[show_key] = latest_text
             save_data(last_episodes)
-            message = f"""🚨 **NEW EPISODE ALERT!**
+            
+            watch_link = latest_url or info["url"]
+            
+            # 🔥 NEW NICER MESSAGE
+            message = f"""🚨 **NEW EPISODE ALERT!** 🎉
 
-**Show**: {info["name"]}
-**Latest**: {latest}
+**📺 Show:** {info["name"]}
+**🎬 Latest:** {latest_text}
 
-🔗 {info["url"]}"""
+🔥 **Watch Now:** [Click to Watch]({watch_link})"""
+
             try:
                 bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
                 print(f"✅ Sent alert for {info['name']}")
             except Exception as e:
                 print("Telegram error:", e)
 
-# ====================== HEALTH CHECK FOR UPTIMEROBOT ======================
+# ====================== HEALTH CHECK ======================
 @app.route('/', methods=['GET'])
 def home():
     return f"Zee5 Bot is running! Monitoring {len(SHOWS)} shows ✅", 200
