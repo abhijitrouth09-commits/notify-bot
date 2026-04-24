@@ -77,20 +77,39 @@ def get_latest_episode(url):
         return None
 
     soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text()
 
-    matches = re.findall(r'Episode\s*\d+', text, re.IGNORECASE)
+    # 🔥 Find all text
+    text = soup.get_text(" ")
 
-    if not matches:
-        tg_log("❌ No episode found")
+    # Try multiple patterns
+    patterns = [
+        r'Episode\s*(\d+)',
+        r'\bE\s?(\d+)\b',
+        r'\bEp\s?(\d+)\b',
+        r'\b(\d{2,4})\b'  # fallback numbers like 289
+    ]
+
+    found_numbers = []
+
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for m in matches:
+            try:
+                num = int(m)
+                if 50 < num < 2000:  # filter noise
+                    found_numbers.append(num)
+            except:
+                pass
+
+    if not found_numbers:
+        tg_log("❌ No episode numbers detected")
         return None
 
-    numbers = [int(re.search(r'\d+', m).group()) for m in matches]
-    latest_ep_num = max(numbers)
+    latest_ep = max(found_numbers)
 
-    episode_text = f"Episode {latest_ep_num}"
+    episode_text = f"Episode {latest_ep}"
 
-    tg_log(f"🎬 Found: {episode_text}")
+    tg_log(f"🎬 Detected: {episode_text}")
 
     return {
         "id": episode_text,
