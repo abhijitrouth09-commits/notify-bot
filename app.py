@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 # ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
+BROWSERLESS_TOKEN = os.getenv("BROWSERLESS_TOKEN")
 
 SHOWS = {
     "tumm-se-tumm-tak": {
@@ -26,7 +27,7 @@ DATA_FILE = "last_episodes.json"
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ================= LOGGER =================
+# ================= TG LOGGER =================
 def tg_log(text):
     try:
         bot.send_message(ADMIN_CHAT_ID, f"🪵 {str(text)[:3500]}")
@@ -44,63 +45,58 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(last_episodes, f)
 
-# ================= SCRAPER =================
-def get_latest_episode(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-
+# ================= BROWSERLESS FETCH =================
+def fetch_rendered_html(url):
     try:
-        tg_log("🌐 Fetching page...")
+        api_url = f"https://chrome.browserless.io/content?token={BROWSERLESS_TOKEN}"
 
-        r = requests.get(url, headers=headers, timeout=15)
-        html = r.text
+        payload = {
+            "url": url,
+            "waitFor": 5000  # wait for JS load
+        }
 
-        if len(html) < 1000:
-            tg_log("❌ Page too small (blocked)")
+        tg_log("🌐 Loading via Browserless...")
+
+        r = requests.post(api_url, json=payload, timeout=30)
+
+        if r.status_code != 200:
+            tg_log(f"❌ Browserless error: {r.status_code}")
             return None
 
-        soup = BeautifulSoup(html, "html.parser")
+        return r.text
 
-        # 🔥 Try to extract from script JSON
-        scripts = soup.find_all("script")
+    except Exception as e:
+        tg_log(f"❌ Fetch error: {e}")
+        return None
 
-        for script in scripts:
-            if script.string and "episode" in script.string.lower():
-                text = script.string
+# ================= PARSE =================
+def get_latest_episode(url):
+    html = fetch_rendered_html(url)
+    if not html:
+        return None
 
-                # Try to find Episode patterns
-                match = re.search(r'Episode\s*\d+', text, re.IGNORECASE)
-                if match:
-                    ep = match.group(0)
-                    tg_log(f"✅ Found in script: {ep}")
+    soup = BeautifulSoup(html, "html.parser")
+    text = soup.get_text()
 
-                    return {
-                        "id": ep,
-                        "title": ep,
-                        "date": "Latest"
-                    }
+    # 🔥 Find latest episode
+    matches = re.findall(r'Episode\s*\d+', text, re.IGNORECASE)
 
-        # 🔥 Fallback: raw text scan
-        page_text = soup.get_text()
-
-        match = re.search(r'Episode\s*\d+', page_text, re.IGNORECASE)
-        if match:
-            ep = match.group(0)
-            tg_log(f"✅ Found in page text: {ep}")
-
-            return {
-                "id": ep,
-                "title": ep,
-                "date": "Latest"
-            }
-
+    if not matches:
         tg_log("❌ No episode found")
         return None
 
-    except Exception as e:
-        tg_log(f"❌ Error: {e}")
-        return None
+    # Extract highest number
+    numbers = [int(re.search(r'\d+', m).group()) for m in matches]
+    latest_ep_num = max(numbers)
+
+    episode_text = f"Episode {latest_ep_num}"
+
+    tg_log(f"🎬 Found: {episode_text}")
+
+    return {
+        "id": episode_text,
+        "title": episode_text
+    }
 
 # ================= CHECK =================
 def check_for_new_episodes():
