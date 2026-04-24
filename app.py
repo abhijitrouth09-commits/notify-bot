@@ -14,12 +14,6 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 
 SHOWS = {
     "tumm-se-tumm-tak": {"name": "Tumm Se Tum Tak", "url": "https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/0-6-4z5727104"},
-    "saru": {"name": "Saru", "url": "https://www.zee5.com/tv-shows/details/saru/0-6-4z5727070"},
-    "vasudha": {"name": "Vasudha", "url": "https://www.zee5.com/tv-shows/details/vasudha/0-6-4z5612471"},
-    "jagadhatri": {"name": "Jagadhatri", "url": "https://www.zee5.com/tv-shows/details/jagadhatri/0-6-4z5853175"},
-    "lakshmi-nivas": {"name": "Lakshmi Nivas", "url": "https://www.zee5.com/tv-shows/details/lakshmi-nivas/0-6-4z5891598"},
-    "ganga-mai-ki-betiyan": {"name": "Ganga Mai Ki Betiyan", "url": "https://www.zee5.com/tv-shows/details/ganga-mai-ki-betiyan/0-6-4z5793364"},
-    "jaane-anjaane-hum-mile": {"name": "Jaane Anjaane Hum Mile", "url": "https://www.zee5.com/tv-shows/details/jaane-anjaane-hum-mile/0-6-4z5646159"}
 }
 
 DATA_FILE = "last_episodes.json"
@@ -45,76 +39,63 @@ def get_latest_episode(show_url):
         r = requests.get(show_url, headers=headers, timeout=20)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, 'html.parser')
-        raw_text = soup.get_text(separator=" | ", strip=True)
+        raw_text = soup.get_text(separator=" | ")
 
-        print(f"\n🔍 DEBUG - Page length: {len(raw_text)} characters")
-        print(f"🔍 First 500 chars: {raw_text[:500]}...")
+        print("\n" + "="*80)
+        print("DEBUG - FULL PAGE TEXT (first 800 chars):")
+        print(raw_text[:800])
+        print("="*80)
 
-        # Very aggressive search for episode numbers
+        # Super aggressive patterns for today's episode
         patterns = [
-            r'E\d+\s*[\d]*m?\s*[\d]*\s*[A-Za-z]+',   # E289 32m 24 Apr
-            r'E\d+',                                 # Any E number
+            r'E\d+\s+\d+m?\s+\d+\s+[A-Za-z]+',   # E289 32m 24 Apr
+            r'E\d+',
         ]
 
-        all_matches = []
         for pattern in patterns:
             matches = re.findall(pattern, raw_text)
             if matches:
-                all_matches.extend(matches)
+                latest = matches[0]
+                print(f"✅ MATCH FOUND: {latest}")
+                return latest[:250]
 
-        print(f"🔍 All potential episode matches found: {all_matches}")
-
-        if all_matches:
-            latest = all_matches[0]   # first one is usually newest
-            print(f"✅ SELECTED LATEST: {latest}")
-            return latest[:250]
-
-        print("❌ No episode pattern matched")
+        print("❌ NO MATCH FOUND")
         return None
 
     except Exception as e:
-        print(f"❌ Error fetching page: {e}")
+        print(f"❌ Error: {e}")
         return None
 
 def check_for_new_episodes():
     global last_episodes
-    print(f"[{time.strftime('%H:%M:%S')}] === STARTING FULL CHECK ===")
+    print(f"[{time.strftime('%H:%M:%S')}] === CHECK STARTED ===")
 
     for show_key, info in SHOWS.items():
-        print(f"\n📡 Checking {info['name']} ...")
+        print(f"Checking {info['name']}...")
         latest = get_latest_episode(info["url"])
-        
-        if not latest:
-            print(f"   → No episode detected")
-            continue
 
-        old = last_episodes.get(show_key)
-        print(f"   Old saved: {old}")
-        print(f"   New found: {latest}")
+        if latest:
+            old = last_episodes.get(show_key)
+            print(f"Old: {old} | New: {latest}")
 
-        if old != latest:
-            last_episodes[show_key] = latest
-            save_data(last_episodes)
-            print(f"   → NEW EPISODE DETECTED! Sending alert...")
+            if old != latest:
+                last_episodes[show_key] = latest
+                save_data(last_episodes)
+                message = f"""🚨 **NEW EPISODE ALERT!** 🎉
 
-            message = f"""🚨 **NEW EPISODE ALERT!** 🎉
-
-📺 **Show:** {info["name"]}
-🎬 **Latest:** {latest}
+📺 Show: {info["name"]}
+🎬 Latest: {latest}
 
 🔥 [Watch Now]({info["url"]})"""
+                bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
+                print("✅ ALERT SENT!")
 
-            bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
-            print(f"   ✅ Alert sent for {info['name']}")
-        else:
-            print(f"   → No change")
+    print("=== CHECK FINISHED ===\n")
 
-    print(f"[{time.strftime('%H:%M:%S')}] === CHECK COMPLETED ===\n")
-
-# ====================== ROUTES & COMMANDS ======================
+# ====================== ROUTES ======================
 @app.route('/', methods=['GET'])
 def home():
-    return "Notification Bot Running ✅", 200
+    return "Bot Running ✅", 200
 
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def webhook():
@@ -124,34 +105,32 @@ def webhook():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "✅ Notification Bot is alive!\n\n/check → manual check\n/reset → clear saved episodes")
+    bot.reply_to(message, "✅ Bot is alive!\n\n/check → test\n/reset → clear data")
 
 @bot.message_handler(commands=['check'])
 def manual_check(message):
     if message.chat.id == ADMIN_CHAT_ID:
-        bot.reply_to(message, "🔄 Checking all shows now...")
+        bot.reply_to(message, "🔄 Checking now...")
         check_for_new_episodes()
         bot.reply_to(message, "✅ Check done!")
     else:
         bot.reply_to(message, "❌ Only owner can use.")
 
 @bot.message_handler(commands=['reset'])
-def reset_data(message):
+def reset(message):
     if message.chat.id == ADMIN_CHAT_ID:
         global last_episodes
         last_episodes = {}
         if os.path.exists(DATA_FILE):
             os.remove(DATA_FILE)
-        bot.reply_to(message, "✅ All saved episodes cleared.")
-    else:
-        bot.reply_to(message, "❌ Only owner can use.")
+        bot.reply_to(message, "✅ Data cleared. Next check will see everything as new.")
 
 # ====================== SCHEDULER ======================
 def run_scheduler():
     scheduler = BackgroundScheduler()
     scheduler.add_job(check_for_new_episodes, 'interval', minutes=5)
     scheduler.start()
-    print("🚀 Scheduler started - checking every 5 minutes")
+    print("🚀 Scheduler started")
 
 if __name__ == "__main__":
     bot.remove_webhook()
