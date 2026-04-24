@@ -45,15 +45,14 @@ def save_data():
 # ================= HEADERS =================
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
-    "x-access-token": "guest",
+    "Accept": "application/json",
     "Referer": "https://www.zee5.com/",
-    "Origin": "https://www.zee5.com",
-    "Accept": "application/json"
+    "Origin": "https://www.zee5.com"
 }
 
 # ================= GET SEASON =================
 def get_season_id(show_id):
-    url = f"https://gwapi.zee5.com/content/tvshow/{show_id}?country=IN&platform=web"
+    url = f"https://gwapi.zee5.com/content/details/{show_id}?translation=en&country=IN"
 
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
@@ -63,7 +62,6 @@ def get_season_id(show_id):
 
         seasons = (
             data.get("seasons")
-            or data.get("season")
             or data.get("result", {}).get("seasons")
             or []
         )
@@ -72,7 +70,7 @@ def get_season_id(show_id):
             tg_log("❌ No seasons found")
             return None
 
-        season_id = seasons[0].get("id") or seasons[0].get("season_id")
+        season_id = seasons[0].get("id")
         tg_log(f"✅ Season ID: {season_id}")
 
         return season_id
