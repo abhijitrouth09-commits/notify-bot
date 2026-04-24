@@ -52,11 +52,11 @@ def fetch_rendered_html(url):
 
         payload = {
             "code": f"""
-                module.exports = async ({'{'} page {'}'}) => {{
+                async ({'{'} page {'}'}) => {{
                     await page.goto("{url}", {{ waitUntil: 'networkidle2' }});
                     await new Promise(r => setTimeout(r, 5000));
                     return await page.content();
-                }};
+                }}
             """
         }
 
