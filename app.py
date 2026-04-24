@@ -45,24 +45,23 @@ def get_latest_episode(show_url):
         r = requests.get(show_url, headers=headers, timeout=20)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, 'html.parser')
-        text = soup.get_text()
+        text = soup.get_text(separator=" ", strip=True)
 
-        # Stronger pattern to catch today's and future episodes
-        # Matches: E288 22m 23 Apr, E343 32m 24 Apr, etc.
-        pattern = r'E\d+\s+\d+m?\s+\d+\s+[A-Za-z]+'
-        matches = re.findall(pattern, text)
+        # Improved patterns to catch today's episodes reliably
+        patterns = [
+            r'E\d+\s+\d+m?\s+\d+\s+[A-Za-z]+',     # E289 32m 24 Apr
+            r'E\d+\s+\d{1,2}m?\s+\d{1,2}\s+[A-Za-z]+',
+            r'E\d+',                                 # fallback any E number
+        ]
 
-        if matches:
-            latest = matches[0]  # first match is usually the newest
-            print(f"✅ Found latest episode: {latest} for {show_url}")
-            return latest[:250]
+        for pattern in patterns:
+            matches = re.findall(pattern, text)
+            if matches:
+                latest = matches[0]   # first match is usually the newest
+                print(f"✅ Detected: {latest} → {show_url}")
+                return latest[:250]
 
-        # Fallback: any E + number pattern
-        fallback = re.search(r'E\d+', text)
-        if fallback:
-            return fallback.group(0)
-
-        print(f"⚠️ No episode found for {show_url}")
+        print(f"⚠️ No episode pattern found for {show_url}")
         return None
 
     except Exception as e:
@@ -72,25 +71,25 @@ def get_latest_episode(show_url):
 def check_for_new_episodes():
     global last_episodes
     print(f"[{time.strftime('%H:%M:%S')}] Checking {len(SHOWS)} shows...")
-    
+
     for show_key, info in SHOWS.items():
         latest = get_latest_episode(info["url"])
         if not latest:
             continue
-            
+
         old = last_episodes.get(show_key)
-        
+
         if old != latest:
             last_episodes[show_key] = latest
             save_data(last_episodes)
-            
+
             message = f"""🚨 **NEW EPISODE ALERT!** 🎉
 
 📺 **Show:** {info["name"]}
 🎬 **Latest:** {latest}
 
 🔥 [Watch Now]({info["url"]})"""
-            
+
             try:
                 bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
                 print(f"✅ Alert sent for {info['name']}")
