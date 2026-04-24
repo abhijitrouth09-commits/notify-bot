@@ -6,6 +6,7 @@ from flask import Flask, request
 import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
 import threading
+import xml.etree.ElementTree as ET
 
 # ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -14,7 +15,7 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 SHOWS = {
     "tumm-se-tumm-tak": {
         "name": "Tumm Se Tum Tak",
-        "show_id": "0-6-4z5727104"
+        "query": "Tumm Se Tum Tak latest episode"
     },
 }
 
@@ -42,91 +43,38 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(last_episodes, f)
 
-# ================= HEADERS =================
-HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json",
-    "Referer": "https://www.zee5.com/",
-    "Origin": "https://www.zee5.com"
-}
-
-# ================= GET SEASON =================
-def get_season_id(show_id):
-    url = f"https://gwapi.zee5.com/content/details/{show_id}?translation=en&country=IN"
-
+# ================= RSS FETCH =================
+def get_latest_episode(query):
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        data = r.json()
+        url = f"https://news.google.com/rss/search?q={query.replace(' ', '+')}&hl=en-IN&gl=IN&ceid=IN:en"
+        tg_log(f"🌐 Fetching RSS: {url}")
 
-        tg_log(f"📦 SHOW DATA: {data}")
+        r = requests.get(url, timeout=15)
+        root = ET.fromstring(r.content)
 
-        seasons = (
-            data.get("seasons")
-            or data.get("result", {}).get("seasons")
-            or []
-        )
+        items = root.findall(".//item")
 
-        if not seasons:
-            tg_log("❌ No seasons found")
+        if not items:
+            tg_log("❌ No RSS items found")
             return None
 
-        season_id = seasons[0].get("id")
-        tg_log(f"✅ Season ID: {season_id}")
+        latest = items[0]
 
-        return season_id
+        title = latest.find("title").text
+        link = latest.find("link").text
+        pub_date = latest.find("pubDate").text
 
-    except Exception as e:
-        tg_log(f"❌ Season error: {e}")
-        return None
-
-# ================= GET EPISODES =================
-def get_latest_episode(show_id):
-    season_id = get_season_id(show_id)
-    if not season_id:
-        return None
-
-    url = f"https://gwapi.zee5.com/content/tvshow/?season_id={season_id}&page=1&limit=20&country=IN&platform=web"
-
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        data = r.json()
-
-        tg_log(f"📦 EPISODE DATA: {data}")
-
-        episodes = (
-            data.get("episode")
-            or data.get("episodes")
-            or data.get("items")
-            or data.get("result")
-        )
-
-        if not episodes:
-            tg_log("❌ No episodes found")
-            return None
-
-        valid_eps = [ep for ep in episodes if isinstance(ep, dict)]
-
-        if not valid_eps:
-            tg_log("❌ No valid episode objects")
-            return None
-
-        valid_eps.sort(
-            key=lambda x: x.get("release_date") or "",
-            reverse=True
-        )
-
-        latest = valid_eps[0]
-
-        tg_log(f"🎬 LATEST: {latest}")
+        tg_log(f"📰 Latest RSS: {title}")
 
         return {
-            "id": latest.get("id") or latest.get("content_id"),
-            "title": latest.get("title") or latest.get("name"),
-            "date": latest.get("release_date") or latest.get("publish_date")
+            "id": title,  # use title as unique ID
+            "title": title,
+            "date": pub_date,
+            "link": link
         }
 
     except Exception as e:
-        tg_log(f"❌ Episode error: {e}")
+        tg_log(f"❌ RSS error: {e}")
         return None
 
 # ================= CHECK =================
@@ -134,7 +82,7 @@ def check_for_new_episodes():
     tg_log("🔥 FUNCTION STARTED")
 
     for key, info in SHOWS.items():
-        result = get_latest_episode(info["show_id"])
+        result = get_latest_episode(info["query"])
         if not result:
             tg_log("⚠️ No result returned")
             continue
@@ -145,19 +93,19 @@ def check_for_new_episodes():
             last_episodes[key] = result["id"]
             save_data()
 
-            message = f"""🚨 *NEW EPISODE*
+            message = f"""🚨 *NEW UPDATE*
 
 📺 {info["name"]}
-🎬 {result["title"]}
+📰 {result["title"]}
 📅 {result["date"]}
 
-🔥 https://www.zee5.com/tv-shows/details/{key}/{info["show_id"]}
+🔗 {result["link"]}
 """
 
             bot.send_message(ADMIN_CHAT_ID, message, parse_mode="Markdown")
             tg_log("✅ Alert sent")
         else:
-            tg_log("ℹ️ No new episode")
+            tg_log("ℹ️ No new update")
 
 # ================= FLASK =================
 @app.route('/', methods=['GET'])
@@ -195,7 +143,7 @@ def manual_check(message):
 # ================= SCHEDULER =================
 def run_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(check_for_new_episodes, 'interval', minutes=5, max_instances=1)
+    scheduler.add_job(check_for_new_episodes, 'interval', minutes=10, max_instances=1)
     scheduler.start()
 
 # ================= MAIN =================
