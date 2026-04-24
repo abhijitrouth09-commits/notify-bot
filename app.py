@@ -34,7 +34,7 @@ def tg_log(text):
     except:
         pass
 
-# ================= LOAD DATA =================
+# ================= LOAD =================
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         last_episodes = json.load(f)
@@ -45,24 +45,24 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(last_episodes, f)
 
-# ================= BROWSERLESS FETCH =================
+# ================= FETCH =================
 def fetch_rendered_html(url):
     try:
-        api_url = "https://chrome.browserless.io/content"
-
-        params = {
-            "token": BROWSERLESS_TOKEN,
-            "waitUntil": "networkidle2",
-            "timeout": 30000
-        }
+        api_url = f"https://chrome.browserless.io/function?token={BROWSERLESS_TOKEN}"
 
         payload = {
-            "url": url
+            "code": f"""
+                export default async function({{ page }}) {{
+                    await page.goto("{url}", {{ waitUntil: 'networkidle' }});
+                    await new Promise(r => setTimeout(r, 5000));
+                    return await page.content();
+                }}
+            """
         }
 
-        tg_log("🌐 Loading via Browserless (stable mode)...")
+        tg_log("🌐 Loading via Browserless (final)...")
 
-        r = requests.post(api_url, params=params, json=payload, timeout=40)
+        r = requests.post(api_url, json=payload, timeout=40)
 
         if r.status_code != 200:
             tg_log(f"❌ Browserless error: {r.status_code} | {r.text[:200]}")
@@ -85,11 +85,9 @@ def get_latest_episode(url):
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text(" ")
 
-    # Try multiple patterns
     matches = re.findall(r'(?:Episode|Ep|E)\s*(\d+)', text, re.IGNORECASE)
 
     if not matches:
-        # fallback numbers
         matches = re.findall(r'\b(\d{2,4})\b', text)
 
     numbers = []
