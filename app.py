@@ -29,45 +29,52 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 last_episodes = {}
 
-def get_latest_episode(show_url, show_name):
-    debug_lines = [f"🔍 Checking: {show_name}"]
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+def get_latest_episode(show_url):
+    # Much stronger headers to bypass anti-bot
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://www.zee5.com/",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    }
 
     try:
-        r = requests.get(show_url, headers=headers, timeout=20)
+        r = requests.get(show_url, headers=headers, timeout=25)
+        print(f"Status Code: {r.status_code} | Page Length: {len(r.text)} characters")
+
+        if len(r.text) < 1000:
+            print("⚠️ Page too small → likely blocked by anti-bot")
+            return None
+
         soup = BeautifulSoup(r.text, 'html.parser')
         text = soup.get_text(separator=" | ")
 
-        debug_lines.append(f"Page length: {len(text)} characters")
-
-        # Strong patterns
+        # Strong pattern for today's episode
         match = re.search(r'E\d+\s+\d+m?\s+\d+\s+[A-Za-z]+', text)
         if match:
-            episode = match.group(0)
-            debug_lines.append(f"✅ STRONG MATCH FOUND: {episode}")
-            return episode, "\n".join(debug_lines)
+            print(f"✅ FOUND: {match.group(0)}")
+            return match.group(0)
 
         match = re.search(r'E\d+', text)
         if match:
-            episode = match.group(0)
-            debug_lines.append(f"✅ BASIC MATCH FOUND: {episode}")
-            return episode, "\n".join(debug_lines)
+            print(f"✅ BASIC FOUND: {match.group(0)}")
+            return match.group(0)
 
-        debug_lines.append("❌ No episode pattern found")
-        return None, "\n".join(debug_lines)
+        print("❌ No episode found")
+        return None
 
     except Exception as e:
-        debug_lines.append(f"❌ Error: {e}")
-        return None, "\n".join(debug_lines)
+        print(f"Error: {e}")
+        return None
 
 def check_for_new_episodes():
-    global last_episodes
-    full_debug = ["🔄 **CHECK STARTED**"]
-
+    print(f"[{time.strftime('%H:%M:%S')}] Starting check...")
     for show_key, info in SHOWS.items():
-        latest, debug_text = get_latest_episode(info["url"], info["name"])
-        full_debug.append(debug_text)
-
+        latest = get_latest_episode(info["url"])
         if latest:
             old = last_episodes.get(show_key)
             if old != latest:
@@ -79,9 +86,7 @@ def check_for_new_episodes():
 
 🔥 [Watch Now]({info["url"]})"""
                 bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
-
-    full_debug.append("✅ **CHECK FINISHED**")
-    bot.send_message(ADMIN_CHAT_ID, "\n\n".join(full_debug), parse_mode='Markdown')
+    print("Check finished.\n")
 
 # ====================== BASIC SETUP ======================
 @app.route('/', methods=['GET'])
@@ -96,26 +101,23 @@ def webhook():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "✅ Bot is alive!\n\n/check → test with debug\n/reset → clear data")
+    bot.reply_to(message, "✅ Bot is alive!\n\n/check → test\n/reset → clear data")
 
 @bot.message_handler(commands=['check'])
 def manual_check(message):
     if message.chat.id == ADMIN_CHAT_ID:
-        bot.reply_to(message, "🔄 Running full check with debug...")
+        bot.reply_to(message, "🔄 Checking now...")
         check_for_new_episodes()
+        bot.reply_to(message, "✅ Check done!")
     else:
-        bot.reply_to(message, "❌ Only owner can use.")
+        bot.reply_to(message, "❌ Owner only")
 
 @bot.message_handler(commands=['reset'])
 def reset(message):
-    if message.chat.id == ADMIN_CHAT_ID:
-        global last_episodes
-        last_episodes = {}
-        bot.reply_to(message, "✅ All saved episodes cleared.")
-    else:
-        bot.reply_to(message, "❌ Only owner can use.")
+    global last_episodes
+    last_episodes = {}
+    bot.reply_to(message, "✅ Data cleared.")
 
-# ====================== SCHEDULER ======================
 def run_scheduler():
     scheduler = BackgroundScheduler()
     scheduler.add_job(check_for_new_episodes, 'interval', minutes=5)
