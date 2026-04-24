@@ -7,6 +7,7 @@ from flask import Flask, request
 import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
 import threading
+import re
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
@@ -41,43 +42,62 @@ last_episodes = load_data()
 def get_latest_episode(show_url):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
-        r = requests.get(show_url, headers=headers, timeout=15)
+        r = requests.get(show_url, headers=headers, timeout=20)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, 'html.parser')
-        
-        for h3 in soup.find_all('h3'):
-            text = h3.get_text(strip=True)
-            if text.startswith('E') and any(c.isdigit() for c in text[:6]):
-                return text[:250]
-        
-        for el in soup.find_all(['h3', 'div', 'p', 'span']):
-            txt = el.get_text(strip=True)
-            if any(f"E{num}" in txt for num in range(200, 500)):
-                return txt[:250]
+        text = soup.get_text()
+
+        # Stronger pattern to catch today's and future episodes
+        # Matches: E288 22m 23 Apr, E343 32m 24 Apr, etc.
+        pattern = r'E\d+\s+\d+m?\s+\d+\s+[A-Za-z]+'
+        matches = re.findall(pattern, text)
+
+        if matches:
+            latest = matches[0]  # first match is usually the newest
+            print(f"✅ Found latest episode: {latest} for {show_url}")
+            return latest[:250]
+
+        # Fallback: any E + number pattern
+        fallback = re.search(r'E\d+', text)
+        if fallback:
+            return fallback.group(0)
+
+        print(f"⚠️ No episode found for {show_url}")
         return None
-    except:
+
+    except Exception as e:
+        print(f"❌ Error fetching {show_url}: {e}")
         return None
 
 def check_for_new_episodes():
     global last_episodes
     print(f"[{time.strftime('%H:%M:%S')}] Checking {len(SHOWS)} shows...")
+    
     for show_key, info in SHOWS.items():
         latest = get_latest_episode(info["url"])
         if not latest:
             continue
+            
         old = last_episodes.get(show_key)
+        
         if old != latest:
             last_episodes[show_key] = latest
             save_data(last_episodes)
+            
             message = f"""🚨 **NEW EPISODE ALERT!** 🎉
 
 📺 **Show:** {info["name"]}
 🎬 **Latest:** {latest}
 
 🔥 [Watch Now]({info["url"]})"""
-            bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
-            print(f"✅ Alert sent for {info['name']}")
+            
+            try:
+                bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
+                print(f"✅ Alert sent for {info['name']}")
+            except Exception as e:
+                print(f"Telegram error: {e}")
 
+# ====================== ROUTES ======================
 @app.route('/', methods=['GET'])
 def home():
     return "Notification Bot Running ✅", 200
@@ -101,11 +121,12 @@ def manual_check(message):
     else:
         bot.reply_to(message, "❌ Only owner can use.")
 
+# ====================== SCHEDULER ======================
 def run_scheduler():
     scheduler = BackgroundScheduler()
     scheduler.add_job(check_for_new_episodes, 'interval', minutes=5)
     scheduler.start()
-    print("🚀 Notification scheduler started - checking every 5 minutes")
+    print("🚀 Scheduler started - checking every 5 minutes")
 
 if __name__ == "__main__":
     bot.remove_webhook()
