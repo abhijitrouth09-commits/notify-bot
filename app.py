@@ -27,7 +27,7 @@ DATA_FILE = "last_episodes.json"
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ================= TELEGRAM LOGGER =================
+# ================= LOGGER =================
 def tg_log(text):
     try:
         bot.send_message(ADMIN_CHAT_ID, f"🪵 {str(text)[:3500]}")
@@ -45,22 +45,22 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(last_episodes, f)
 
-# ================= BROWSERLESS FETCH =================
+# ================= BROWSERLESS FETCH (FINAL FIX) =================
 def fetch_rendered_html(url):
     try:
         api_url = f"https://chrome.browserless.io/function?token={BROWSERLESS_TOKEN}"
 
         payload = {
             "code": f"""
-                async ({'{'} page {'}'}) => {{
+                export default async function({{ page }}) {{
                     await page.goto("{url}", {{ waitUntil: 'networkidle2' }});
-                    await new Promise(r => setTimeout(r, 5000));
+                    await page.waitForTimeout(5000);
                     return await page.content();
                 }}
             """
         }
 
-        tg_log("🌐 Loading via Browserless (advanced)...")
+        tg_log("🌐 Loading via Browserless...")
 
         r = requests.post(api_url, json=payload, timeout=40)
 
@@ -68,7 +68,7 @@ def fetch_rendered_html(url):
             tg_log(f"❌ Browserless error: {r.status_code} | {r.text[:200]}")
             return None
 
-        tg_log("✅ Full page loaded")
+        tg_log("✅ Page loaded")
 
         return r.text
 
@@ -85,14 +85,14 @@ def get_latest_episode(url):
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text()
 
-    # now JS-loaded content is present
-    matches = re.findall(r'Episode\s*\d+', text, re.IGNORECASE)
+    # detect episode numbers
+    matches = re.findall(r'(?:Episode|Ep|E)\s*(\d+)', text, re.IGNORECASE)
 
     if not matches:
-        tg_log("❌ No episode found after JS load")
+        tg_log("❌ No episode found")
         return None
 
-    numbers = [int(re.search(r'\d+', m).group()) for m in matches]
+    numbers = [int(x) for x in matches if x.isdigit()]
     latest = max(numbers)
 
     episode_text = f"Episode {latest}"
@@ -103,6 +103,7 @@ def get_latest_episode(url):
         "id": episode_text,
         "title": episode_text
     }
+
 # ================= CHECK =================
 def check_for_new_episodes():
     tg_log("🔥 FUNCTION STARTED")
@@ -126,7 +127,6 @@ def check_for_new_episodes():
 
 🔥 {info["url"]}
 """
-
             bot.send_message(ADMIN_CHAT_ID, message, parse_mode="Markdown")
             tg_log("✅ Alert sent")
         else:
