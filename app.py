@@ -45,24 +45,24 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(last_episodes, f)
 
-# ================= BROWSERLESS FETCH (FINAL FIX) =================
+# ================= BROWSERLESS FETCH =================
 def fetch_rendered_html(url):
     try:
-        api_url = f"https://chrome.browserless.io/function?token={BROWSERLESS_TOKEN}"
+        api_url = "https://chrome.browserless.io/content"
 
-        payload = {
-            "code": f"""
-                export default async function({{ page }}) {{
-                    await page.goto("{url}", {{ waitUntil: 'networkidle2' }});
-                    await page.waitForTimeout(5000);
-                    return await page.content();
-                }}
-            """
+        params = {
+            "token": BROWSERLESS_TOKEN,
+            "waitUntil": "networkidle2",
+            "timeout": 30000
         }
 
-        tg_log("🌐 Loading via Browserless...")
+        payload = {
+            "url": url
+        }
 
-        r = requests.post(api_url, json=payload, timeout=40)
+        tg_log("🌐 Loading via Browserless (stable mode)...")
+
+        r = requests.post(api_url, params=params, json=payload, timeout=40)
 
         if r.status_code != 200:
             tg_log(f"❌ Browserless error: {r.status_code} | {r.text[:200]}")
@@ -83,16 +83,28 @@ def get_latest_episode(url):
         return None
 
     soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text()
+    text = soup.get_text(" ")
 
-    # detect episode numbers
+    # Try multiple patterns
     matches = re.findall(r'(?:Episode|Ep|E)\s*(\d+)', text, re.IGNORECASE)
 
     if not matches:
-        tg_log("❌ No episode found")
+        # fallback numbers
+        matches = re.findall(r'\b(\d{2,4})\b', text)
+
+    numbers = []
+    for m in matches:
+        try:
+            n = int(m)
+            if 50 < n < 2000:
+                numbers.append(n)
+        except:
+            pass
+
+    if not numbers:
+        tg_log("❌ No episode numbers found")
         return None
 
-    numbers = [int(x) for x in matches if x.isdigit()]
     latest = max(numbers)
 
     episode_text = f"Episode {latest}"
@@ -127,6 +139,7 @@ def check_for_new_episodes():
 
 🔥 {info["url"]}
 """
+
             bot.send_message(ADMIN_CHAT_ID, message, parse_mode="Markdown")
             tg_log("✅ Alert sent")
         else:
