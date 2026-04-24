@@ -45,23 +45,35 @@ def get_latest_episode(show_url):
         r = requests.get(show_url, headers=headers, timeout=20)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, 'html.parser')
-        text = soup.get_text(separator=" ", strip=True)
 
-        # Improved patterns to catch today's episodes reliably
-        patterns = [
-            r'E\d+\s+\d+m?\s+\d+\s+[A-Za-z]+',     # E289 32m 24 Apr
-            r'E\d+\s+\d{1,2}m?\s+\d{1,2}\s+[A-Za-z]+',
-            r'E\d+',                                 # fallback any E number
-        ]
+        # Stronger detection for today's episodes
+        episode_text = None
 
-        for pattern in patterns:
-            matches = re.findall(pattern, text)
-            if matches:
-                latest = matches[0]   # first match is usually the newest
-                print(f"✅ Detected: {latest} → {show_url}")
-                return latest[:250]
+        # Look for episode cards (most reliable)
+        cards = soup.find_all(['div', 'a'], class_=lambda x: x and ('episode' in str(x).lower() or 'card' in str(x).lower()))
+        for card in cards:
+            text = card.get_text(strip=True)
+            if re.search(r'E\d+', text):
+                episode_text = text
+                break
 
-        print(f"⚠️ No episode pattern found for {show_url}")
+        # Fallback 1: Direct E number + date pattern
+        if not episode_text:
+            match = re.search(r'E\d+\s+\d+m?\s+\d+\s+[A-Za-z]+', soup.get_text())
+            if match:
+                episode_text = match.group(0)
+
+        # Fallback 2: Any E number
+        if not episode_text:
+            match = re.search(r'E\d+', soup.get_text())
+            if match:
+                episode_text = match.group(0)
+
+        if episode_text:
+            print(f"✅ Detected latest: {episode_text} for {show_url}")
+            return episode_text[:250]
+
+        print(f"⚠️ No episode found for {show_url}")
         return None
 
     except Exception as e:
@@ -109,7 +121,7 @@ def webhook():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "✅ Notification Bot is alive!\n\n/check → manual check")
+    bot.reply_to(message, "✅ Notification Bot is alive!\n\n/check → manual check\n/reset → clear saved episodes")
 
 @bot.message_handler(commands=['check'])
 def manual_check(message):
@@ -117,6 +129,17 @@ def manual_check(message):
         bot.reply_to(message, "🔄 Checking all shows now...")
         check_for_new_episodes()
         bot.reply_to(message, "✅ Check done!")
+    else:
+        bot.reply_to(message, "❌ Only owner can use.")
+
+@bot.message_handler(commands=['reset'])
+def reset_data(message):
+    if message.chat.id == ADMIN_CHAT_ID:
+        global last_episodes
+        last_episodes = {}
+        if os.path.exists(DATA_FILE):
+            os.remove(DATA_FILE)
+        bot.reply_to(message, "✅ All saved episodes cleared. Next check will detect everything as new.")
     else:
         bot.reply_to(message, "❌ Only owner can use.")
 
