@@ -48,21 +48,27 @@ def save_data():
 # ================= BROWSERLESS FETCH =================
 def fetch_rendered_html(url):
     try:
-        api_url = f"https://chrome.browserless.io/content?token={BROWSERLESS_TOKEN}"
+        api_url = f"https://chrome.browserless.io/function?token={BROWSERLESS_TOKEN}"
 
         payload = {
-            "url": url
+            "code": f"""
+                module.exports = async ({'{'} page {'}'}) => {{
+                    await page.goto("{url}", {{ waitUntil: 'networkidle2' }});
+                    await new Promise(r => setTimeout(r, 5000));
+                    return await page.content();
+                }};
+            """
         }
 
-        tg_log("🌐 Loading via Browserless...")
+        tg_log("🌐 Loading via Browserless (advanced)...")
 
-        r = requests.post(api_url, json=payload, timeout=30)
+        r = requests.post(api_url, json=payload, timeout=40)
 
         if r.status_code != 200:
             tg_log(f"❌ Browserless error: {r.status_code} | {r.text[:200]}")
             return None
 
-        tg_log("✅ Page loaded")
+        tg_log("✅ Full page loaded")
 
         return r.text
 
