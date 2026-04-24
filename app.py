@@ -16,8 +16,31 @@ SHOWS = {
     "tumm-se-tumm-tak": {
         "name": "Tumm Se Tum Tak",
         "url": "https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/0-6-4z5727104"
+    },
+    "saru": {
+        "name": "Saru",
+        "url": "https://www.zee5.com/tv-shows/details/saru/0-6-4z5727070"
+    },
+    "vasudha": {
+        "name": "Vasudha",
+        "url": "https://www.zee5.com/tv-shows/details/vasudha/0-6-4z5612471"
+    },
+    "jagadhatri": {
+        "name": "Jagadhatri",
+        "url": "https://www.zee5.com/tv-shows/details/jagadhatri/0-6-4z5853175"
+    },
+    "lakshmi-nivas": {
+        "name": "Lakshmi Nivas",
+        "url": "https://www.zee5.com/tv-shows/details/lakshmi-nivas/0-6-4z5891598"
+    },
+    "ganga-mai-ki-betiyan": {
+        "name": "Ganga Mai Ki Betiyan",
+        "url": "https://www.zee5.com/tv-shows/details/ganga-mai-ki-betiyan/0-6-4z5793364"
+    },
+    "jaane-anjaane-hum-mile": {
+        "name": "Jaane Anjaane Hum Mile",
+        "url": "https://www.zee5.com/tv-shows/details/jaane-anjaane-hum-mile/0-6-4z5646159"
     }
-    # Add more shows later here
 }
 
 DATA_FILE = "last_episodes.json"
@@ -52,7 +75,7 @@ def get_latest_episode(show_url):
        
         for el in soup.find_all(['h3', 'div', 'p', 'span']):
             txt = el.get_text(strip=True)
-            if any(f"E{num}" in txt for num in range(270, 400)):
+            if any(f"E{num}" in txt for num in range(200, 500)):
                 return txt[:250]
         return None
     except Exception as e:
@@ -61,7 +84,7 @@ def get_latest_episode(show_url):
 
 def check_for_new_episodes():
     global last_episodes
-    print(f"[{time.strftime('%H:%M:%S')}] Checking Zee5...")
+    print(f"[{time.strftime('%H:%M:%S')}] Checking {len(SHOWS)} Zee5 shows...")
     for show_key, info in SHOWS.items():
         latest = get_latest_episode(info["url"])
         if not latest:
@@ -85,7 +108,7 @@ def check_for_new_episodes():
 # ====================== HEALTH CHECK FOR UPTIMEROBOT ======================
 @app.route('/', methods=['GET'])
 def home():
-    return "Zee5 Bot is running! ✅", 200
+    return f"Zee5 Bot is running! Monitoring {len(SHOWS)} shows ✅", 200
 
 # ====================== WEBHOOK ======================
 @app.route('/' + BOT_TOKEN, methods=['POST'])
@@ -97,12 +120,12 @@ def webhook():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "✅ Zee5 Bot is alive on Render!\n\n/check → manual check")
+    bot.reply_to(message, "✅ Zee5 Bot is alive!\n\n/check → manual check")
 
 @bot.message_handler(commands=['check'])
 def manual_check(message):
     if message.chat.id == ADMIN_CHAT_ID:
-        bot.reply_to(message, "🔄 Checking Zee5 now...")
+        bot.reply_to(message, "🔄 Checking all shows now...")
         check_for_new_episodes()
         bot.reply_to(message, "✅ Check done!")
     else:
@@ -111,7 +134,7 @@ def manual_check(message):
 # ====================== SCHEDULER ======================
 def run_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(check_for_new_episodes, 'interval', minutes=5)   # ← Changed to 5 minutes
+    scheduler.add_job(check_for_new_episodes, 'interval', minutes=5)
     scheduler.start()
     print("🚀 Scheduler started - checking every 5 minutes")
 
