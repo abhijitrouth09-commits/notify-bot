@@ -27,7 +27,7 @@ DATA_FILE = "last_episodes.json"
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ================= TG LOGGER =================
+# ================= TELEGRAM LOGGER =================
 def tg_log(text):
     try:
         bot.send_message(ADMIN_CHAT_ID, f"🪵 {str(text)[:3500]}")
@@ -51,8 +51,7 @@ def fetch_rendered_html(url):
         api_url = f"https://chrome.browserless.io/content?token={BROWSERLESS_TOKEN}"
 
         payload = {
-            "url": url,
-            "waitFor": 5000  # wait for JS load
+            "url": url
         }
 
         tg_log("🌐 Loading via Browserless...")
@@ -60,8 +59,10 @@ def fetch_rendered_html(url):
         r = requests.post(api_url, json=payload, timeout=30)
 
         if r.status_code != 200:
-            tg_log(f"❌ Browserless error: {r.status_code}")
+            tg_log(f"❌ Browserless error: {r.status_code} | {r.text[:200]}")
             return None
+
+        tg_log("✅ Page loaded")
 
         return r.text
 
@@ -78,14 +79,12 @@ def get_latest_episode(url):
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text()
 
-    # 🔥 Find latest episode
     matches = re.findall(r'Episode\s*\d+', text, re.IGNORECASE)
 
     if not matches:
         tg_log("❌ No episode found")
         return None
 
-    # Extract highest number
     numbers = [int(re.search(r'\d+', m).group()) for m in matches]
     latest_ep_num = max(numbers)
 
