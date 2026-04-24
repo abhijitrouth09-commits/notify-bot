@@ -10,7 +10,7 @@ import threading
 
 # ========================= CONFIG =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))   # ← This reads from Render
+ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 
 SHOWS = {
     "tumm-se-tumm-tak": {
@@ -45,13 +45,11 @@ def get_latest_episode(show_url):
         r.raise_for_status()
         soup = BeautifulSoup(r.text, 'html.parser')
        
-        # IMPROVED: Matches current Zee5 structure (E288 22m 23 Apr)
         for h3 in soup.find_all('h3'):
             text = h3.get_text(strip=True)
             if text.startswith('E') and any(c.isdigit() for c in text[:6]):
                 return text[:250]
        
-        # Fallback
         for el in soup.find_all(['h3', 'div', 'p', 'span']):
             txt = el.get_text(strip=True)
             if any(f"E{num}" in txt for num in range(270, 400)):
@@ -84,6 +82,11 @@ def check_for_new_episodes():
             except Exception as e:
                 print("Telegram error:", e)
 
+# ====================== HEALTH CHECK FOR UPTIMEROBOT ======================
+@app.route('/', methods=['GET'])
+def home():
+    return "Zee5 Bot is running! ✅", 200
+
 # ====================== WEBHOOK ======================
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def webhook():
@@ -96,17 +99,8 @@ def webhook():
 def start(message):
     bot.reply_to(message, "✅ Zee5 Bot is alive on Render!\n\n/check → manual check")
 
-# ====================== DEBUG CHECK COMMAND ======================
 @bot.message_handler(commands=['check'])
 def manual_check(message):
-    debug_text = f"""🔍 **DEBUG INFORMATION**
-
-Your real chat ID     = {message.chat.id}
-ADMIN_CHAT_ID from Render = {ADMIN_CHAT_ID}
-
-Are these two numbers **exactly the same**?"""
-    bot.reply_to(message, debug_text, parse_mode='Markdown')
-    
     if message.chat.id == ADMIN_CHAT_ID:
         bot.reply_to(message, "🔄 Checking Zee5 now...")
         check_for_new_episodes()
@@ -117,9 +111,9 @@ Are these two numbers **exactly the same**?"""
 # ====================== SCHEDULER ======================
 def run_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(check_for_new_episodes, 'interval', minutes=25)
+    scheduler.add_job(check_for_new_episodes, 'interval', minutes=5)   # ← Changed to 5 minutes
     scheduler.start()
-    print("🚀 Scheduler started - checking every 25 minutes")
+    print("🚀 Scheduler started - checking every 5 minutes")
 
 if __name__ == "__main__":
     bot.remove_webhook()
