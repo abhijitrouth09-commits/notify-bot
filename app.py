@@ -24,6 +24,13 @@ DATA_FILE = "last_episodes.json"
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# ================= TELEGRAM LOGGER =================
+def tg_log(text):
+    try:
+        bot.send_message(ADMIN_CHAT_ID, f"🪵 {str(text)[:3500]}")
+    except:
+        pass
+
 # ================= LOAD DATA =================
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
@@ -52,7 +59,7 @@ def get_season_id(show_id):
         r = requests.get(url, headers=HEADERS, timeout=15)
         data = r.json()
 
-        print("📦 SHOW DATA:", str(data)[:500])
+        tg_log(f"📦 SHOW DATA: {data}")
 
         seasons = (
             data.get("seasons")
@@ -62,16 +69,16 @@ def get_season_id(show_id):
         )
 
         if not seasons:
-            print("❌ No seasons found")
+            tg_log("❌ No seasons found")
             return None
 
         season_id = seasons[0].get("id") or seasons[0].get("season_id")
-        print("✅ Season ID:", season_id)
+        tg_log(f"✅ Season ID: {season_id}")
 
         return season_id
 
     except Exception as e:
-        print("❌ Season error:", e)
+        tg_log(f"❌ Season error: {e}")
         return None
 
 # ================= GET EPISODES =================
@@ -86,7 +93,7 @@ def get_latest_episode(show_id):
         r = requests.get(url, headers=HEADERS, timeout=15)
         data = r.json()
 
-        print("📦 EPISODE DATA:", str(data)[:500])
+        tg_log(f"📦 EPISODE DATA: {data}")
 
         episodes = (
             data.get("episode")
@@ -96,13 +103,13 @@ def get_latest_episode(show_id):
         )
 
         if not episodes:
-            print("❌ No episodes found")
+            tg_log("❌ No episodes found")
             return None
 
         valid_eps = [ep for ep in episodes if isinstance(ep, dict)]
 
         if not valid_eps:
-            print("❌ No valid episode objects")
+            tg_log("❌ No valid episode objects")
             return None
 
         valid_eps.sort(
@@ -112,7 +119,7 @@ def get_latest_episode(show_id):
 
         latest = valid_eps[0]
 
-        print("🎬 LATEST:", latest)
+        tg_log(f"🎬 LATEST: {latest}")
 
         return {
             "id": latest.get("id") or latest.get("content_id"),
@@ -121,18 +128,17 @@ def get_latest_episode(show_id):
         }
 
     except Exception as e:
-        print("❌ Episode error:", e)
+        tg_log(f"❌ Episode error: {e}")
         return None
 
 # ================= CHECK =================
 def check_for_new_episodes():
-    print("\n🔥 FUNCTION STARTED")
-    print(f"[{time.strftime('%H:%M:%S')}] Checking...")
+    tg_log("🔥 FUNCTION STARTED")
 
     for key, info in SHOWS.items():
         result = get_latest_episode(info["show_id"])
         if not result:
-            print("⚠️ No result returned")
+            tg_log("⚠️ No result returned")
             continue
 
         old_id = last_episodes.get(key)
@@ -151,11 +157,9 @@ def check_for_new_episodes():
 """
 
             bot.send_message(ADMIN_CHAT_ID, message, parse_mode="Markdown")
-            print("✅ Alert sent")
+            tg_log("✅ Alert sent")
         else:
-            print("ℹ️ No new episode")
-
-    print("✅ Done\n")
+            tg_log("ℹ️ No new episode")
 
 # ================= FLASK =================
 @app.route('/', methods=['GET'])
@@ -171,12 +175,12 @@ def webhook():
 # ================= COMMANDS =================
 @bot.message_handler(commands=['start'])
 def start(message):
-    print("📩 /start from:", message.chat.id)
-    bot.reply_to(message, "✅ Bot is running\nUse /check to test")
+    tg_log(f"📩 /start from {message.chat.id}")
+    bot.reply_to(message, "✅ Bot is running\nUse /check")
 
 @bot.message_handler(commands=['check'])
 def manual_check(message):
-    print("📩 /check from:", message.chat.id)
+    tg_log(f"📩 /check from {message.chat.id}")
 
     if message.chat.id == ADMIN_CHAT_ID:
         bot.reply_to(message, "🔄 Checking...")
@@ -185,7 +189,7 @@ def manual_check(message):
             check_for_new_episodes()
             bot.reply_to(message, "✅ Done")
         except Exception as e:
-            print("❌ ERROR:", e)
+            tg_log(f"❌ ERROR: {e}")
             bot.reply_to(message, f"❌ Error: {e}")
     else:
         bot.reply_to(message, f"❌ Owner only\nYour ID: {message.chat.id}")
@@ -202,7 +206,7 @@ if __name__ == "__main__":
     time.sleep(1)
 
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
-    print("🔗 Setting webhook:", webhook_url)
+    tg_log(f"🔗 Webhook: {webhook_url}")
 
     bot.set_webhook(url=webhook_url)
 
