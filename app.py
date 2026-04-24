@@ -78,43 +78,47 @@ def get_latest_episode(url):
 
     soup = BeautifulSoup(html, "html.parser")
 
-    # 🔥 Find all text
-    text = soup.get_text(" ")
+    # 🔥 Find Next.js data
+    script = soup.find("script", {"id": "__NEXT_DATA__"})
 
-    # Try multiple patterns
-    patterns = [
-        r'Episode\s*(\d+)',
-        r'\bE\s?(\d+)\b',
-        r'\bEp\s?(\d+)\b',
-        r'\b(\d{2,4})\b'  # fallback numbers like 289
-    ]
-
-    found_numbers = []
-
-    for pattern in patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        for m in matches:
-            try:
-                num = int(m)
-                if 50 < num < 2000:  # filter noise
-                    found_numbers.append(num)
-            except:
-                pass
-
-    if not found_numbers:
-        tg_log("❌ No episode numbers detected")
+    if not script:
+        tg_log("❌ __NEXT_DATA__ not found")
         return None
 
-    latest_ep = max(found_numbers)
+    try:
+        data = json.loads(script.string)
 
-    episode_text = f"Episode {latest_ep}"
+        tg_log("📦 Extracted JSON")
 
-    tg_log(f"🎬 Detected: {episode_text}")
+        # 🔍 Navigate structure (dynamic safe parsing)
+        content = json.dumps(data)
 
-    return {
-        "id": episode_text,
-        "title": episode_text
-    }
+        # Find episode numbers in JSON
+        matches = re.findall(r'"episode_number"\s*:\s*(\d+)', content)
+
+        if not matches:
+            # fallback key
+            matches = re.findall(r'"episodeNumber"\s*:\s*(\d+)', content)
+
+        if not matches:
+            tg_log("❌ No episode numbers in JSON")
+            return None
+
+        numbers = [int(x) for x in matches]
+        latest = max(numbers)
+
+        episode_text = f"Episode {latest}"
+
+        tg_log(f"🎬 Found from JSON: {episode_text}")
+
+        return {
+            "id": episode_text,
+            "title": episode_text
+        }
+
+    except Exception as e:
+        tg_log(f"❌ JSON parse error: {e}")
+        return None
 
 # ================= CHECK =================
 def check_for_new_episodes():
