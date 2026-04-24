@@ -35,7 +35,7 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(last_episodes, f)
 
-# ================= COMMON HEADERS =================
+# ================= HEADERS =================
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "x-access-token": "guest",
@@ -52,17 +52,22 @@ def get_season_id(show_id):
         r = requests.get(url, headers=HEADERS, timeout=15)
         data = r.json()
 
-        print("📦 SHOW API RESPONSE (trimmed):")
-        print(json.dumps(data, indent=2)[:800])
+        print("📦 SHOW DATA:", str(data)[:500])
 
-        seasons = data.get("seasons") or data.get("season") or []
+        seasons = (
+            data.get("seasons")
+            or data.get("season")
+            or data.get("result", {}).get("seasons")
+            or []
+        )
 
         if not seasons:
             print("❌ No seasons found")
             return None
 
-        season_id = seasons[0].get("id")
-        print(f"✅ Season ID: {season_id}")
+        season_id = seasons[0].get("id") or seasons[0].get("season_id")
+        print("✅ Season ID:", season_id)
+
         return season_id
 
     except Exception as e:
@@ -81,10 +86,8 @@ def get_latest_episode(show_id):
         r = requests.get(url, headers=HEADERS, timeout=15)
         data = r.json()
 
-        print("📦 EPISODE API RESPONSE (trimmed):")
-        print(json.dumps(data, indent=2)[:800])
+        print("📦 EPISODE DATA:", str(data)[:500])
 
-        # 🔥 Flexible parsing (handles API variations)
         episodes = (
             data.get("episode")
             or data.get("episodes")
@@ -93,20 +96,15 @@ def get_latest_episode(show_id):
         )
 
         if not episodes:
-            print("❌ No episodes found in response")
+            print("❌ No episodes found")
             return None
 
-        # 🔥 Normalize + filter valid episodes
-        valid_eps = []
-        for ep in episodes:
-            if isinstance(ep, dict):
-                valid_eps.append(ep)
+        valid_eps = [ep for ep in episodes if isinstance(ep, dict)]
 
         if not valid_eps:
             print("❌ No valid episode objects")
             return None
 
-        # 🔥 Sort by release_date safely
         valid_eps.sort(
             key=lambda x: x.get("release_date") or "",
             reverse=True
@@ -114,8 +112,7 @@ def get_latest_episode(show_id):
 
         latest = valid_eps[0]
 
-        print("🎬 Latest Episode Found:")
-        print(latest)
+        print("🎬 LATEST:", latest)
 
         return {
             "id": latest.get("id") or latest.get("content_id"),
@@ -129,11 +126,13 @@ def get_latest_episode(show_id):
 
 # ================= CHECK =================
 def check_for_new_episodes():
-    print(f"\n[{time.strftime('%H:%M:%S')}] 🔄 Checking...")
+    print("\n🔥 FUNCTION STARTED")
+    print(f"[{time.strftime('%H:%M:%S')}] Checking...")
 
     for key, info in SHOWS.items():
         result = get_latest_episode(info["show_id"])
         if not result:
+            print("⚠️ No result returned")
             continue
 
         old_id = last_episodes.get(key)
@@ -172,16 +171,24 @@ def webhook():
 # ================= COMMANDS =================
 @bot.message_handler(commands=['start'])
 def start(message):
+    print("📩 /start from:", message.chat.id)
     bot.reply_to(message, "✅ Bot is running\nUse /check to test")
 
 @bot.message_handler(commands=['check'])
 def manual_check(message):
+    print("📩 /check from:", message.chat.id)
+
     if message.chat.id == ADMIN_CHAT_ID:
         bot.reply_to(message, "🔄 Checking...")
-        check_for_new_episodes()
-        bot.reply_to(message, "✅ Done")
+
+        try:
+            check_for_new_episodes()
+            bot.reply_to(message, "✅ Done")
+        except Exception as e:
+            print("❌ ERROR:", e)
+            bot.reply_to(message, f"❌ Error: {e}")
     else:
-        bot.reply_to(message, "❌ Owner only")
+        bot.reply_to(message, f"❌ Owner only\nYour ID: {message.chat.id}")
 
 # ================= SCHEDULER =================
 def run_scheduler():
@@ -194,9 +201,10 @@ if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(1)
 
-    bot.set_webhook(
-        url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
-    )
+    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
+    print("🔗 Setting webhook:", webhook_url)
+
+    bot.set_webhook(url=webhook_url)
 
     threading.Thread(target=run_scheduler, daemon=True).start()
 
