@@ -8,43 +8,20 @@ import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
 import threading
 
-# ========================= CONFIG =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 
 SHOWS = {
-    "tumm-se-tumm-tak": {
-        "name": "Tumm Se Tum Tak",
-        "url": "https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/0-6-4z5727104"
-    },
-    "saru": {
-        "name": "Saru",
-        "url": "https://www.zee5.com/tv-shows/details/saru/0-6-4z5727070"
-    },
-    "vasudha": {
-        "name": "Vasudha",
-        "url": "https://www.zee5.com/tv-shows/details/vasudha/0-6-4z5612471"
-    },
-    "jagadhatri": {
-        "name": "Jagadhatri",
-        "url": "https://www.zee5.com/tv-shows/details/jagadhatri/0-6-4z5853175"
-    },
-    "lakshmi-nivas": {
-        "name": "Lakshmi Nivas",
-        "url": "https://www.zee5.com/tv-shows/details/lakshmi-nivas/0-6-4z5891598"
-    },
-    "ganga-mai-ki-betiyan": {
-        "name": "Ganga Mai Ki Betiyan",
-        "url": "https://www.zee5.com/tv-shows/details/ganga-mai-ki-betiyan/0-6-4z5793364"
-    },
-    "jaane-anjaane-hum-mile": {
-        "name": "Jaane Anjaane Hum Mile",
-        "url": "https://www.zee5.com/tv-shows/details/jaane-anjaane-hum-mile/0-6-4z5646159"
-    }
+    "tumm-se-tumm-tak": {"name": "Tumm Se Tum Tak", "url": "https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/0-6-4z5727104"},
+    "saru": {"name": "Saru", "url": "https://www.zee5.com/tv-shows/details/saru/0-6-4z5727070"},
+    "vasudha": {"name": "Vasudha", "url": "https://www.zee5.com/tv-shows/details/vasudha/0-6-4z5612471"},
+    "jagadhatri": {"name": "Jagadhatri", "url": "https://www.zee5.com/tv-shows/details/jagadhatri/0-6-4z5853175"},
+    "lakshmi-nivas": {"name": "Lakshmi Nivas", "url": "https://www.zee5.com/tv-shows/details/lakshmi-nivas/0-6-4z5891598"},
+    "ganga-mai-ki-betiyan": {"name": "Ganga Mai Ki Betiyan", "url": "https://www.zee5.com/tv-shows/details/ganga-mai-ki-betiyan/0-6-4z5793364"},
+    "jaane-anjaane-hum-mile": {"name": "Jaane Anjaane Hum Mile", "url": "https://www.zee5.com/tv-shows/details/jaane-anjaane-hum-mile/0-6-4z5646159"}
 }
 
 DATA_FILE = "last_episodes.json"
-# =======================================================
 
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -68,74 +45,52 @@ def get_latest_episode(show_url):
         r.raise_for_status()
         soup = BeautifulSoup(r.text, 'html.parser')
         
-        episode_link = None
-        episode_text = None
+        for h3 in soup.find_all('h3'):
+            text = h3.get_text(strip=True)
+            if text.startswith('E') and any(c.isdigit() for c in text[:6]):
+                return text[:250]
         
-        for card in soup.find_all(['div', 'a'], class_=lambda x: x and ('episode' in str(x).lower() or 'card' in str(x).lower())):
-            a_tag = card.find('a', href=True)
-            if a_tag and '/tv-shows/details/' in a_tag['href']:
-                episode_link = "https://www.zee5.com" + a_tag['href']
-                episode_text = card.get_text(strip=True)[:250]
-                break
-        
-        if not episode_text:
-            for h3 in soup.find_all('h3'):
-                text = h3.get_text(strip=True)
-                if text.startswith('E') and any(c.isdigit() for c in text[:6]):
-                    episode_text = text[:250]
-                    break
-        
-        return episode_text, episode_link
-    except Exception as e:
-        print("Fetch error:", e)
-        return None, None
+        for el in soup.find_all(['h3', 'div', 'p', 'span']):
+            txt = el.get_text(strip=True)
+            if any(f"E{num}" in txt for num in range(200, 500)):
+                return txt[:250]
+        return None
+    except:
+        return None
 
 def check_for_new_episodes():
     global last_episodes
     print(f"[{time.strftime('%H:%M:%S')}] Checking {len(SHOWS)} shows...")
     for show_key, info in SHOWS.items():
-        latest_text, latest_url = get_latest_episode(info["url"])
-        if not latest_text:
+        latest = get_latest_episode(info["url"])
+        if not latest:
             continue
-            
-        old_text = last_episodes.get(show_key)
-        
-        if old_text != latest_text:
-            last_episodes[show_key] = latest_text
+        old = last_episodes.get(show_key)
+        if old != latest:
+            last_episodes[show_key] = latest
             save_data(last_episodes)
-            
-            watch_link = latest_url or info["url"]
-            
-            # 🔥 NEW NICER MESSAGE
             message = f"""🚨 **NEW EPISODE ALERT!** 🎉
 
-**📺 Show:** {info["name"]}
-**🎬 Latest:** {latest_text}
+📺 **Show:** {info["name"]}
+🎬 **Latest:** {latest}
 
-🔥 **Watch Now:** [Click to Watch]({watch_link})"""
+🔥 [Watch Now]({info["url"]})"""
+            bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
+            print(f"✅ Alert sent for {info['name']}")
 
-            try:
-                bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
-                print(f"✅ Sent alert for {info['name']}")
-            except Exception as e:
-                print("Telegram error:", e)
-
-# ====================== HEALTH CHECK ======================
 @app.route('/', methods=['GET'])
 def home():
-    return f"Zee5 Bot is running! Monitoring {len(SHOWS)} shows ✅", 200
+    return "Notification Bot Running ✅", 200
 
-# ====================== WEBHOOK ======================
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        update = request.get_json()
-        bot.process_new_updates([telebot.types.Update.de_json(update)])
+    update = request.get_json()
+    bot.process_new_updates([telebot.types.Update.de_json(update)])
     return '', 200
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "✅ Zee5 Bot is alive!\n\n/check → manual check")
+    bot.reply_to(message, "✅ Notification Bot is alive!\n\n/check → manual check")
 
 @bot.message_handler(commands=['check'])
 def manual_check(message):
@@ -146,19 +101,18 @@ def manual_check(message):
     else:
         bot.reply_to(message, "❌ Only owner can use.")
 
-# ====================== SCHEDULER ======================
 def run_scheduler():
     scheduler = BackgroundScheduler()
     scheduler.add_job(check_for_new_episodes, 'interval', minutes=5)
     scheduler.start()
-    print("🚀 Scheduler started - checking every 5 minutes")
+    print("🚀 Notification scheduler started - checking every 5 minutes")
 
 if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(1)
     bot.set_webhook(url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}")
-   
+    
     threading.Thread(target=run_scheduler, daemon=True).start()
-   
+    
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
