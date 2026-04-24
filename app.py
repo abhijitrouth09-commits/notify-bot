@@ -6,7 +6,8 @@ from flask import Flask, request
 import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
 import threading
-import xml.etree.ElementTree as ET
+import re
+from bs4 import BeautifulSoup
 
 # ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -15,7 +16,7 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 SHOWS = {
     "tumm-se-tumm-tak": {
         "name": "Tumm Se Tum Tak",
-        "query": "Tumm Se Tum Tak latest episode"
+        "url": "https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/0-6-4z5727104"
     },
 }
 
@@ -25,7 +26,7 @@ DATA_FILE = "last_episodes.json"
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ================= TELEGRAM LOGGER =================
+# ================= LOGGER =================
 def tg_log(text):
     try:
         bot.send_message(ADMIN_CHAT_ID, f"🪵 {str(text)[:3500]}")
@@ -43,38 +44,62 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(last_episodes, f)
 
-# ================= RSS FETCH =================
-def get_latest_episode(query):
+# ================= SCRAPER =================
+def get_latest_episode(url):
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
     try:
-        url = f"https://news.google.com/rss/search?q={query.replace(' ', '+')}&hl=en-IN&gl=IN&ceid=IN:en"
-        tg_log(f"🌐 Fetching RSS: {url}")
+        tg_log("🌐 Fetching page...")
 
-        r = requests.get(url, timeout=15)
-        root = ET.fromstring(r.content)
+        r = requests.get(url, headers=headers, timeout=15)
+        html = r.text
 
-        items = root.findall(".//item")
-
-        if not items:
-            tg_log("❌ No RSS items found")
+        if len(html) < 1000:
+            tg_log("❌ Page too small (blocked)")
             return None
 
-        latest = items[0]
+        soup = BeautifulSoup(html, "html.parser")
 
-        title = latest.find("title").text
-        link = latest.find("link").text
-        pub_date = latest.find("pubDate").text
+        # 🔥 Try to extract from script JSON
+        scripts = soup.find_all("script")
 
-        tg_log(f"📰 Latest RSS: {title}")
+        for script in scripts:
+            if script.string and "episode" in script.string.lower():
+                text = script.string
 
-        return {
-            "id": title,  # use title as unique ID
-            "title": title,
-            "date": pub_date,
-            "link": link
-        }
+                # Try to find Episode patterns
+                match = re.search(r'Episode\s*\d+', text, re.IGNORECASE)
+                if match:
+                    ep = match.group(0)
+                    tg_log(f"✅ Found in script: {ep}")
+
+                    return {
+                        "id": ep,
+                        "title": ep,
+                        "date": "Latest"
+                    }
+
+        # 🔥 Fallback: raw text scan
+        page_text = soup.get_text()
+
+        match = re.search(r'Episode\s*\d+', page_text, re.IGNORECASE)
+        if match:
+            ep = match.group(0)
+            tg_log(f"✅ Found in page text: {ep}")
+
+            return {
+                "id": ep,
+                "title": ep,
+                "date": "Latest"
+            }
+
+        tg_log("❌ No episode found")
+        return None
 
     except Exception as e:
-        tg_log(f"❌ RSS error: {e}")
+        tg_log(f"❌ Error: {e}")
         return None
 
 # ================= CHECK =================
@@ -82,7 +107,7 @@ def check_for_new_episodes():
     tg_log("🔥 FUNCTION STARTED")
 
     for key, info in SHOWS.items():
-        result = get_latest_episode(info["query"])
+        result = get_latest_episode(info["url"])
         if not result:
             tg_log("⚠️ No result returned")
             continue
@@ -93,19 +118,18 @@ def check_for_new_episodes():
             last_episodes[key] = result["id"]
             save_data()
 
-            message = f"""🚨 *NEW UPDATE*
+            message = f"""🚨 *NEW EPISODE*
 
 📺 {info["name"]}
-📰 {result["title"]}
-📅 {result["date"]}
+🎬 {result["title"]}
 
-🔗 {result["link"]}
+🔥 {info["url"]}
 """
 
             bot.send_message(ADMIN_CHAT_ID, message, parse_mode="Markdown")
             tg_log("✅ Alert sent")
         else:
-            tg_log("ℹ️ No new update")
+            tg_log("ℹ️ No new episode")
 
 # ================= FLASK =================
 @app.route('/', methods=['GET'])
@@ -122,7 +146,7 @@ def webhook():
 @bot.message_handler(commands=['start'])
 def start(message):
     tg_log(f"📩 /start from {message.chat.id}")
-    bot.reply_to(message, "✅ Bot is running\nUse /check")
+    bot.reply_to(message, "✅ Bot running\nUse /check")
 
 @bot.message_handler(commands=['check'])
 def manual_check(message):
@@ -143,7 +167,7 @@ def manual_check(message):
 # ================= SCHEDULER =================
 def run_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(check_for_new_episodes, 'interval', minutes=10, max_instances=1)
+    scheduler.add_job(check_for_new_episodes, 'interval', minutes=10)
     scheduler.start()
 
 # ================= MAIN =================
