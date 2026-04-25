@@ -18,6 +18,11 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 SHOWS = {
     "tumm-se-tumm-tak": {"name": "Tumm Se Tum Tak", "url": "https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/0-6-4z5727104"},
     "saru": {"name": "Saru", "url": "https://www.zee5.com/tv-shows/details/saru/0-6-4z5727070"},
+    "vasudha": {"name": "Vasudha", "url": "https://www.zee5.com/tv-shows/details/vasudha/0-6-4z5612471"},
+    "jagadhatri": {"name": "Jagadhatri", "url": "https://www.zee5.com/tv-shows/details/jagadhatri/0-6-4z5853175"},
+    "lakshmi-nivas": {"name": "Lakshmi Nivas", "url": "https://www.zee5.com/tv-shows/details/lakshmi-nivas/0-6-4z5891598"},
+    "ganga-mai-ki-betiyan": {"name": "Ganga Mai Ki Betiyan", "url": "https://www.zee5.com/tv-shows/details/ganga-mai-ki-betiyan/0-6-4z5793364"},
+    "jaane-anjaane-hum-mile": {"name": "Jaane Anjaane Hum Mile", "url": "https://www.zee5.com/tv-shows/details/jaane-anjaane-hum-mile/0-6-4z5646159"}
 }
 
 DATA_FILE = "last_episodes.json"
@@ -33,16 +38,16 @@ def debug(msg):
     except:
         pass
 
-# ================= ENSURE PLAYWRIGHT =================
+# ================= ENSURE BROWSER =================
 def ensure_browser():
     try:
-        debug("🔧 Ensuring Playwright browser...")
-        subprocess.run(["playwright", "install", "chromium"], check=True)
-        debug("✅ Browser ready")
+        debug("🔧 Installing Chromium...")
+        subprocess.run(["python", "-m", "playwright", "install", "chromium"], check=True)
+        debug("✅ Chromium ready")
     except Exception as e:
-        debug(f"❌ Install failed: {e}")
+        debug(f"❌ Install error: {e}")
 
-# ================= LOAD =================
+# ================= LOAD DATA =================
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         last_episodes = json.load(f)
@@ -56,21 +61,28 @@ def save_data():
 # ================= SCRAPER =================
 def get_latest_episode(show_url):
     try:
+        debug(f"🌐 Opening: {show_url}")
+
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
                 args=[
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
-                    "--disable-gpu"
+                    "--disable-gpu",
+                    "--single-process"
                 ]
             )
 
             page = browser.new_page()
             page.goto(show_url, timeout=60000)
+
             page.wait_for_timeout(8000)
+            debug("✅ Page loaded")
 
             html = page.content()
+            debug(f"📄 HTML size: {len(html)}")
+
             soup = BeautifulSoup(html, "html.parser")
 
             episodes = []
@@ -86,8 +98,11 @@ def get_latest_episode(show_url):
             browser.close()
 
             if episodes:
-                return f"E{max(episodes)}"
+                latest = max(episodes)
+                debug(f"🎬 Found episode: {latest}")
+                return f"E{latest}"
 
+            debug("⚠️ No episode found")
             return None
 
     except Exception as e:
@@ -114,13 +129,17 @@ def check_for_new_episodes():
             last_episodes[key] = latest
             save_data()
 
-            bot.send_message(
-                ADMIN_CHAT_ID,
-                f"🚨 NEW EPISODE\n\n📺 {info['name']}\n🎬 {latest}\n\n{info['url']}"
-            )
-            debug("✅ Alert sent")
+            msg = f"""🚨 *NEW EPISODE*
+
+📺 {info["name"]}
+🎬 {latest}
+
+🔥 {info["url"]}
+"""
+            bot.send_message(ADMIN_CHAT_ID, msg, parse_mode="Markdown")
+            debug(f"✅ Alert sent for {info['name']}")
         else:
-            debug("ℹ️ No update")
+            debug(f"ℹ️ No update: {info['name']}")
 
     debug("✅ CHECK COMPLETE")
 
@@ -135,12 +154,17 @@ def webhook():
     bot.process_new_updates([telebot.types.Update.de_json(update)])
     return "", 200
 
-# ================= COMMAND =================
+# ================= COMMANDS =================
+@bot.message_handler(commands=['start'])
+def start(msg):
+    bot.reply_to(msg, "✅ Bot running\nUse /check")
+
 @bot.message_handler(commands=['check'])
 def manual_check(msg):
     if msg.chat.id == ADMIN_CHAT_ID:
         bot.reply_to(msg, "🔄 Checking...")
         check_for_new_episodes()
+        bot.reply_to(msg, "✅ Done")
     else:
         bot.reply_to(msg, "❌ Not allowed")
 
@@ -149,19 +173,28 @@ def run_scheduler():
     scheduler = BackgroundScheduler()
     scheduler.add_job(check_for_new_episodes, 'interval', minutes=10)
     scheduler.start()
+    debug("🚀 Scheduler started")
 
-# ================= MAIN =================
-if __name__ == "__main__":
-    ensure_browser()  # 🔥 CRITICAL FIX
+# ================= AUTO START (GUNICORN SAFE) =================
+def start_bot():
+    try:
+        debug("🚀 Starting bot (gunicorn mode)")
 
-    bot.remove_webhook()
-    time.sleep(1)
+        ensure_browser()
 
-    bot.set_webhook(
-        url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
-    )
+        bot.remove_webhook()
+        time.sleep(1)
 
-    threading.Thread(target=run_scheduler, daemon=True).start()
+        bot.set_webhook(
+            url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
+        )
 
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+        threading.Thread(target=run_scheduler, daemon=True).start()
+
+        debug("✅ Bot + Scheduler started")
+
+    except Exception as e:
+        debug(f"❌ Startup Error: {e}")
+
+# 🔥 RUN ALWAYS (IMPORTANT FOR GUNICORN)
+start_bot()
