@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
 
 pip install -r requirements.txt
-playwright install chromium
+
+# 🔥 install browsers + dependencies
+playwright install --with-deps chromium
