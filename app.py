@@ -1,149 +1,93 @@
 import os
-import json
 import time
 import requests
+from bs4 import BeautifulSoup
 from flask import Flask, request
 import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
 import threading
-import re
-from bs4 import BeautifulSoup
 
-# ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
-BROWSERLESS_TOKEN = os.getenv("BROWSERLESS_TOKEN")
 
 SHOWS = {
     "tumm-se-tumm-tak": {
         "name": "Tumm Se Tum Tak",
         "url": "https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/0-6-4z5727104"
-    },
+    }
 }
 
-DATA_FILE = "last_episodes.json"
-
-# ================= INIT =================
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ================= LOGGER =================
-def tg_log(text):
+last_episodes = {}
+
+# ====================== FETCH FUNCTION ======================
+def get_latest_episode(show_url):
     try:
-        bot.send_message(ADMIN_CHAT_ID, f"🪵 {str(text)[:3500]}")
-    except:
-        pass
-
-# ================= LOAD =================
-if os.path.exists(DATA_FILE):
-    with open(DATA_FILE, "r") as f:
-        last_episodes = json.load(f)
-else:
-    last_episodes = {}
-
-def save_data():
-    with open(DATA_FILE, "w") as f:
-        json.dump(last_episodes, f)
-
-# ================= FETCH =================
-def fetch_rendered_html(url):
-    try:
-        api_url = f"https://chrome.browserless.io/function?token={BROWSERLESS_TOKEN}"
-
-        payload = {
-            "code": f"""
-                export default async function({{ page }}) {{
-                    await page.goto("{url}", {{ waitUntil: 'networkidle' }});
-                    await new Promise(r => setTimeout(r, 5000));
-                    return await page.content();
-                }}
-            """
+        headers = {
+            "User-Agent": "Mozilla/5.0"
         }
 
-        tg_log("🌐 Loading via Browserless (final)...")
-
-        r = requests.post(api_url, json=payload, timeout=40)
+        r = requests.get(show_url, headers=headers, timeout=15)
 
         if r.status_code != 200:
-            tg_log(f"❌ Browserless error: {r.status_code} | {r.text[:200]}")
-            return None
+            return None, "❌ Failed to load page"
 
-        tg_log("✅ Page loaded")
+        soup = BeautifulSoup(r.text, "html.parser")
 
-        return r.text
+        # 🔥 Extract latest episode link
+        latest = soup.find("a", class_="iconsWrap latest")
+
+        if latest and latest.get("href"):
+            episode_url = "https://www.zee5.com" + latest.get("href")
+            return episode_url, "✅ Latest episode found"
+
+        return None, "❌ Latest episode not found"
 
     except Exception as e:
-        tg_log(f"❌ Fetch error: {e}")
-        return None
+        return None, f"❌ Error: {e}"
 
-# ================= PARSE =================
-def get_latest_episode(url):
-    html = fetch_rendered_html(url)
-    if not html:
-        return None
+# ====================== MAIN CHECK ======================
+def check_for_new_episodes(debug_chat=None):
+    chat_id = debug_chat if debug_chat else ADMIN_CHAT_ID
 
-    soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text(" ")
+    bot.send_message(chat_id, "🔥 FUNCTION STARTED")
 
-    matches = re.findall(r'(?:Episode|Ep|E)\s*(\d+)', text, re.IGNORECASE)
+    for show_key, info in SHOWS.items():
+        bot.send_message(chat_id, f"📺 Checking: {info['name']}")
 
-    if not matches:
-        matches = re.findall(r'\b(\d{2,4})\b', text)
+        latest, status = get_latest_episode(info["url"])
 
-    numbers = []
-    for m in matches:
-        try:
-            n = int(m)
-            if 50 < n < 2000:
-                numbers.append(n)
-        except:
-            pass
+        bot.send_message(chat_id, f"🧾 Status: {status}")
 
-    if not numbers:
-        tg_log("❌ No episode numbers found")
-        return None
+        if latest:
+            bot.send_message(chat_id, f"🎬 Latest URL:\n{latest}")
 
-    latest = max(numbers)
+            old = last_episodes.get(show_key)
 
-    episode_text = f"Episode {latest}"
+            if old != latest:
+                last_episodes[show_key] = latest
 
-    tg_log(f"🎬 Found: {episode_text}")
+                message = f"""🚨 *NEW EPISODE ALERT!* 🎉
 
-    return {
-        "id": episode_text,
-        "title": episode_text
-    }
+📺 *Show:* {info["name"]}
 
-# ================= CHECK =================
-def check_for_new_episodes():
-    tg_log("🔥 FUNCTION STARTED")
-
-    for key, info in SHOWS.items():
-        result = get_latest_episode(info["url"])
-        if not result:
-            tg_log("⚠️ No result returned")
-            continue
-
-        old_id = last_episodes.get(key)
-
-        if old_id != result["id"]:
-            last_episodes[key] = result["id"]
-            save_data()
-
-            message = f"""🚨 *NEW EPISODE*
-
-📺 {info["name"]}
-🎬 {result["title"]}
-
-🔥 {info["url"]}
+🔥 [Watch Now]({latest})
 """
 
-            bot.send_message(ADMIN_CHAT_ID, message, parse_mode="Markdown")
-            tg_log("✅ Alert sent")
-        else:
-            tg_log("ℹ️ No new episode")
+                bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
+                bot.send_message(chat_id, "✅ Alert sent!")
 
-# ================= FLASK =================
+            else:
+                bot.send_message(chat_id, "ℹ️ No new episode")
+
+        else:
+            bot.send_message(chat_id, "⚠️ No result returned")
+
+    bot.send_message(chat_id, "✅ CHECK DONE")
+
+# ====================== ROUTES ======================
 @app.route('/', methods=['GET'])
 def home():
     return "Bot Running ✅", 200
@@ -154,43 +98,33 @@ def webhook():
     bot.process_new_updates([telebot.types.Update.de_json(update)])
     return '', 200
 
-# ================= COMMANDS =================
+# ====================== COMMANDS ======================
 @bot.message_handler(commands=['start'])
 def start(message):
-    tg_log(f"📩 /start from {message.chat.id}")
-    bot.reply_to(message, "✅ Bot running\nUse /check")
+    bot.reply_to(message, "✅ Bot is alive!\n\nUse /check")
 
 @bot.message_handler(commands=['check'])
 def manual_check(message):
-    tg_log(f"📩 /check from {message.chat.id}")
-
     if message.chat.id == ADMIN_CHAT_ID:
         bot.reply_to(message, "🔄 Checking...")
-
-        try:
-            check_for_new_episodes()
-            bot.reply_to(message, "✅ Done")
-        except Exception as e:
-            tg_log(f"❌ ERROR: {e}")
-            bot.reply_to(message, f"❌ Error: {e}")
+        check_for_new_episodes(debug_chat=message.chat.id)
     else:
-        bot.reply_to(message, f"❌ Owner only\nYour ID: {message.chat.id}")
+        bot.reply_to(message, "❌ Owner only")
 
-# ================= SCHEDULER =================
+# ====================== SCHEDULER ======================
 def run_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(check_for_new_episodes, 'interval', minutes=10)
+    scheduler.add_job(check_for_new_episodes, 'interval', minutes=5)
     scheduler.start()
 
-# ================= MAIN =================
+# ====================== MAIN ======================
 if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(1)
 
-    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
-    tg_log(f"🔗 Webhook: {webhook_url}")
-
-    bot.set_webhook(url=webhook_url)
+    bot.set_webhook(
+        url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
+    )
 
     threading.Thread(target=run_scheduler, daemon=True).start()
 
