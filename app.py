@@ -175,7 +175,7 @@ def run_scheduler():
     scheduler.start()
     debug("🚀 Scheduler started")
 
-# ================= AUTO START (GUNICORN SAFE) =================
+# ================= AUTO START =================
 def start_bot():
     try:
         debug("🚀 Starting bot (gunicorn mode)")
@@ -185,9 +185,14 @@ def start_bot():
         bot.remove_webhook()
         time.sleep(1)
 
-        bot.set_webhook(
-            url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
-        )
+        debug("🔗 Setting webhook...")
+
+        RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
+        debug(f"🌍 URL: {RENDER_URL}")
+
+        bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
+
+        debug("✅ Webhook set")
 
         threading.Thread(target=run_scheduler, daemon=True).start()
 
@@ -196,5 +201,5 @@ def start_bot():
     except Exception as e:
         debug(f"❌ Startup Error: {e}")
 
-# 🔥 RUN ALWAYS (IMPORTANT FOR GUNICORN)
+# 🔥 IMPORTANT FOR GUNICORN
 start_bot()
