@@ -1,28 +1,32 @@
 import os
 import time
 import json
+import re
 import requests
+from bs4 import BeautifulSoup
 from flask import Flask, request
 import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
 import threading
 
+# ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 
 SHOWS = {
     "tumm-se-tumm-tak": {
         "name": "Tumm Se Tum Tak",
-        "content_id": "0-6-4z5727104"
+        "url": "https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/0-6-4z5727104"
     }
 }
 
 DATA_FILE = "last_episodes.json"
 
+# ================= INIT =================
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ================= LOAD =================
+# ================= LOAD DATA =================
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         last_episodes = json.load(f)
@@ -33,45 +37,56 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(last_episodes, f)
 
-# ================= API FETCH =================
-def get_latest_episode(show):
+# ================= FETCH + PARSE =================
+def get_latest_episode(show_url):
     try:
-        url = f"https://gwapi.zee5.com/content/tvshow/{show['content_id']}?translation=en&country=IN"
-
         headers = {
             "User-Agent": "Mozilla/5.0",
-            "Referer": "https://www.zee5.com/"
+            "Accept-Language": "en-US,en;q=0.9"
         }
 
-        r = requests.get(url, headers=headers, timeout=15)
+        r = requests.get(show_url, headers=headers, timeout=15)
 
         if r.status_code != 200:
-            return None, f"❌ API status {r.status_code}"
+            return None, f"❌ Status {r.status_code}"
 
-        data = r.json()
+        soup = BeautifulSoup(r.text, "html.parser")
 
-        # 🔥 Navigate to episodes
-        seasons = data.get("seasons", [])
+        images = soup.find_all("img")
 
-        if not seasons:
-            return None, "❌ No seasons"
+        episodes = []
 
-        latest_episode = None
+        for img in images:
+            title = img.get("title") or img.get("alt")
 
-        for season in seasons:
-            for ep in season.get("episodes", []):
-                if not latest_episode or ep.get("episode_number", 0) > latest_episode.get("episode_number", 0):
-                    latest_episode = ep
+            if title and "Episode" in title:
+                match = re.search(r"Episode\s*(\d+)", title)
+                if match:
+                    ep_num = int(match.group(1))
+                    src = img.get("src", "")
 
-        if not latest_episode:
-            return None, "❌ No episodes"
+                    id_match = re.search(r"/resources/([^/]+)/", src)
+                    ep_id = id_match.group(1) if id_match else None
 
-        ep_num = latest_episode.get("episode_number")
-        ep_id = latest_episode.get("id")
+                    if ep_id:
+                        episodes.append({
+                            "num": ep_num,
+                            "id": ep_id,
+                            "title": title
+                        })
 
-        ep_url = f"https://www.zee5.com/tv-shows/details/{show['name'].lower().replace(' ', '-')}/{ep_id}"
+        if not episodes:
+            return None, "❌ No episodes found"
 
-        return ep_url, f"✅ Episode {ep_num}"
+        latest = max(episodes, key=lambda x: x["num"])
+
+        ep_url = f"https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/{latest['id']}"
+
+        return {
+            "url": ep_url,
+            "num": latest["num"],
+            "title": latest["title"]
+        }, "✅ Found"
 
     except Exception as e:
         return None, f"❌ Error: {e}"
@@ -85,31 +100,33 @@ def check_for_new_episodes(debug_chat=None):
     for key, info in SHOWS.items():
         bot.send_message(chat_id, f"📺 Checking: {info['name']}")
 
-        latest, status = get_latest_episode(info)
+        result, status = get_latest_episode(info["url"])
 
         bot.send_message(chat_id, f"🧾 Status: {status}")
 
-        if latest:
-            bot.send_message(chat_id, f"🎬 {latest}")
+        if result:
+            bot.send_message(chat_id, f"🎬 Episode {result['num']}")
+            bot.send_message(chat_id, f"🔗 {result['url']}")
 
             old = last_episodes.get(key)
 
-            if old != latest:
-                last_episodes[key] = latest
+            if old != result["url"]:
+                last_episodes[key] = result["url"]
                 save_data()
 
                 msg = f"""🚨 *NEW EPISODE*
 
 📺 {info["name"]}
+🎬 Episode {result["num"]}
 
-🔥 [Watch Now]({latest})
+🔥 [Watch Now]({result["url"]})
 """
                 bot.send_message(ADMIN_CHAT_ID, msg, parse_mode="Markdown")
                 bot.send_message(chat_id, "✅ Alert sent")
             else:
                 bot.send_message(chat_id, "ℹ️ No new episode")
         else:
-            bot.send_message(chat_id, "⚠️ No result")
+            bot.send_message(chat_id, "⚠️ No result returned")
 
     bot.send_message(chat_id, "✅ CHECK DONE")
 
@@ -125,11 +142,17 @@ def webhook():
     return '', 200
 
 # ================= COMMANDS =================
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.reply_to(message, "✅ Bot running\nUse /check")
+
 @bot.message_handler(commands=['check'])
 def manual_check(message):
     if message.chat.id == ADMIN_CHAT_ID:
         bot.reply_to(message, "🔄 Checking...")
         check_for_new_episodes(debug_chat=message.chat.id)
+    else:
+        bot.reply_to(message, "❌ Owner only")
 
 # ================= SCHEDULER =================
 def run_scheduler():
