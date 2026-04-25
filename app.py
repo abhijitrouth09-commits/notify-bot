@@ -29,6 +29,14 @@ DATA_FILE = "last_episodes.json"
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# ================= DEBUG LOGGER =================
+def debug(msg):
+    try:
+        print(msg)
+        bot.send_message(ADMIN_CHAT_ID, f"🪵 {msg}")
+    except:
+        pass
+
 # ================= LOAD =================
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
@@ -43,6 +51,8 @@ def save_data():
 # ================= PLAYWRIGHT =================
 def get_latest_episode(show_url):
     try:
+        debug(f"🌐 Opening: {show_url}")
+
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
@@ -50,10 +60,16 @@ def get_latest_episode(show_url):
             )
 
             page = browser.new_page()
+
+            debug("📡 Loading page...")
             page.goto(show_url, timeout=60000)
+
             page.wait_for_timeout(8000)
+            debug("✅ Page loaded")
 
             html = page.content()
+            debug(f"📄 HTML size: {len(html)}")
+
             soup = BeautifulSoup(html, "html.parser")
 
             episodes = []
@@ -69,26 +85,32 @@ def get_latest_episode(show_url):
             browser.close()
 
             if episodes:
-                return f"E{max(episodes)}"
+                latest = max(episodes)
+                debug(f"🎬 Found episode: {latest}")
+                return f"E{latest}"
 
+            debug("⚠️ No episode found")
             return None
 
     except Exception as e:
-        print("Playwright Error:", e)
+        debug(f"❌ Playwright Error: {str(e)}")
         return None
 
 # ================= CHECK =================
 def check_for_new_episodes():
-    print("🔄 Checking episodes...")
+    debug("🔥 FUNCTION STARTED")
 
     for key, info in SHOWS.items():
+        debug(f"📺 Checking: {info['name']}")
+
         latest = get_latest_episode(info["url"])
 
         if not latest:
-            print(f"⚠️ No data for {info['name']}")
+            debug(f"⚠️ No data for {info['name']}")
             continue
 
         old = last_episodes.get(key)
+        debug(f"📊 Old: {old} | New: {latest}")
 
         if old != latest:
             last_episodes[key] = latest
@@ -102,9 +124,11 @@ def check_for_new_episodes():
 🔥 {info["url"]}
 """
             bot.send_message(ADMIN_CHAT_ID, msg, parse_mode="Markdown")
-            print(f"✅ Sent: {info['name']}")
+            debug(f"✅ Alert sent for {info['name']}")
         else:
-            print(f"ℹ️ No update: {info['name']}")
+            debug(f"ℹ️ No update: {info['name']}")
+
+    debug("✅ CHECK COMPLETE")
 
 # ================= ROUTES =================
 @app.route('/')
@@ -136,7 +160,7 @@ def run_scheduler():
     scheduler = BackgroundScheduler()
     scheduler.add_job(check_for_new_episodes, 'interval', minutes=10)
     scheduler.start()
-    print("🚀 Scheduler started")
+    debug("🚀 Scheduler started")
 
 # ================= MAIN =================
 if __name__ == "__main__":
