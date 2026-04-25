@@ -8,7 +8,6 @@ import subprocess
 from flask import Flask
 import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
-from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 # ================= CONFIG =================
@@ -33,7 +32,7 @@ def debug(msg):
     except:
         pass
 
-# ================= INSTALL BROWSER =================
+# ================= INSTALL =================
 def ensure_browser():
     try:
         debug("🔧 Installing Chromium...")
@@ -53,9 +52,11 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(last_episodes, f)
 
-# ================= SCRAPER =================
+# ================= SCRAPER (FIXED) =================
 def get_latest_episode(url):
     try:
+        debug(f"🌐 Opening: {url}")
+
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
@@ -64,22 +65,28 @@ def get_latest_episode(url):
 
             page = browser.new_page()
             page.goto(url, timeout=60000)
-            page.wait_for_timeout(8000)
 
-            soup = BeautifulSoup(page.content(), "html.parser")
+            # 🔥 WAIT FOR CONTENT
+            page.wait_for_timeout(5000)
 
-            episodes = []
-            for img in soup.find_all("img"):
-                title = img.get("title") or img.get("alt")
-                if title and "Episode" in title:
-                    match = re.search(r"Episode\s*(\d+)", title)
-                    if match:
-                        episodes.append(int(match.group(1)))
+            # scroll to load lazy content
+            page.mouse.wheel(0, 5000)
+            page.wait_for_timeout(3000)
+
+            html = page.content()
+
+            # 🔥 STRONG TEXT EXTRACTION
+            matches = re.findall(r"Episode\s*(\d+)", html, re.IGNORECASE)
 
             browser.close()
 
-            if episodes:
-                return f"E{max(episodes)}"
+            if matches:
+                nums = [int(x) for x in matches]
+                latest = max(nums)
+                debug(f"🎬 Found episode: {latest}")
+                return f"E{latest}"
+
+            debug("⚠️ No episode found in page text")
             return None
 
     except Exception as e:
@@ -96,10 +103,11 @@ def check_for_new_episodes():
         latest = get_latest_episode(info["url"])
 
         if not latest:
-            debug("⚠️ No data")
+            debug(f"⚠️ No data for {info['name']}")
             continue
 
         old = last_episodes.get(key)
+        debug(f"📊 Old: {old} | New: {latest}")
 
         if old != latest:
             last_episodes[key] = latest
@@ -137,19 +145,18 @@ def run_scheduler():
 
 # ================= START =================
 def start_all():
-    debug("🚀 Starting bot (polling mode)")
+    debug("🚀 Starting bot")
 
     ensure_browser()
     run_scheduler()
 
-    bot.remove_webhook()  # 🔥 IMPORTANT
-    debug("🔌 Starting polling...")
+    bot.remove_webhook()
+    debug("🔌 Polling started")
 
     bot.infinity_polling()
 
-# ================= MAIN =================
 threading.Thread(target=start_all, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "Bot Running (Polling) ✅"
+    return "Bot Running ✅"
