@@ -5,7 +5,7 @@ import re
 import threading
 import subprocess
 
-from flask import Flask, request
+from flask import Flask
 import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
 from bs4 import BeautifulSoup
@@ -18,11 +18,6 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 SHOWS = {
     "tumm-se-tumm-tak": {"name": "Tumm Se Tum Tak", "url": "https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/0-6-4z5727104"},
     "saru": {"name": "Saru", "url": "https://www.zee5.com/tv-shows/details/saru/0-6-4z5727070"},
-    "vasudha": {"name": "Vasudha", "url": "https://www.zee5.com/tv-shows/details/vasudha/0-6-4z5612471"},
-    "jagadhatri": {"name": "Jagadhatri", "url": "https://www.zee5.com/tv-shows/details/jagadhatri/0-6-4z5853175"},
-    "lakshmi-nivas": {"name": "Lakshmi Nivas", "url": "https://www.zee5.com/tv-shows/details/lakshmi-nivas/0-6-4z5891598"},
-    "ganga-mai-ki-betiyan": {"name": "Ganga Mai Ki Betiyan", "url": "https://www.zee5.com/tv-shows/details/ganga-mai-ki-betiyan/0-6-4z5793364"},
-    "jaane-anjaane-hum-mile": {"name": "Jaane Anjaane Hum Mile", "url": "https://www.zee5.com/tv-shows/details/jaane-anjaane-hum-mile/0-6-4z5646159"}
 }
 
 DATA_FILE = "last_episodes.json"
@@ -38,7 +33,7 @@ def debug(msg):
     except:
         pass
 
-# ================= ENSURE BROWSER =================
+# ================= INSTALL BROWSER =================
 def ensure_browser():
     try:
         debug("🔧 Installing Chromium...")
@@ -47,7 +42,7 @@ def ensure_browser():
     except Exception as e:
         debug(f"❌ Install error: {e}")
 
-# ================= LOAD DATA =================
+# ================= LOAD =================
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         last_episodes = json.load(f)
@@ -59,37 +54,23 @@ def save_data():
         json.dump(last_episodes, f)
 
 # ================= SCRAPER =================
-def get_latest_episode(show_url):
+def get_latest_episode(url):
     try:
-        debug(f"🌐 Opening: {show_url}")
-
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--single-process"
-                ]
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
 
             page = browser.new_page()
-            page.goto(show_url, timeout=60000)
-
+            page.goto(url, timeout=60000)
             page.wait_for_timeout(8000)
-            debug("✅ Page loaded")
 
-            html = page.content()
-            debug(f"📄 HTML size: {len(html)}")
-
-            soup = BeautifulSoup(html, "html.parser")
+            soup = BeautifulSoup(page.content(), "html.parser")
 
             episodes = []
-
             for img in soup.find_all("img"):
                 title = img.get("title") or img.get("alt")
-
                 if title and "Episode" in title:
                     match = re.search(r"Episode\s*(\d+)", title)
                     if match:
@@ -98,11 +79,7 @@ def get_latest_episode(show_url):
             browser.close()
 
             if episodes:
-                latest = max(episodes)
-                debug(f"🎬 Found episode: {latest}")
-                return f"E{latest}"
-
-            debug("⚠️ No episode found")
+                return f"E{max(episodes)}"
             return None
 
     except Exception as e:
@@ -119,40 +96,24 @@ def check_for_new_episodes():
         latest = get_latest_episode(info["url"])
 
         if not latest:
-            debug(f"⚠️ No data for {info['name']}")
+            debug("⚠️ No data")
             continue
 
         old = last_episodes.get(key)
-        debug(f"📊 Old: {old} | New: {latest}")
 
         if old != latest:
             last_episodes[key] = latest
             save_data()
 
-            msg = f"""🚨 *NEW EPISODE*
-
-📺 {info["name"]}
-🎬 {latest}
-
-🔥 {info["url"]}
-"""
-            bot.send_message(ADMIN_CHAT_ID, msg, parse_mode="Markdown")
-            debug(f"✅ Alert sent for {info['name']}")
+            bot.send_message(
+                ADMIN_CHAT_ID,
+                f"🚨 NEW EPISODE\n\n📺 {info['name']}\n🎬 {latest}\n\n{info['url']}"
+            )
+            debug("✅ Alert sent")
         else:
-            debug(f"ℹ️ No update: {info['name']}")
+            debug("ℹ️ No update")
 
     debug("✅ CHECK COMPLETE")
-
-# ================= ROUTES =================
-@app.route('/')
-def home():
-    return "Bot Running ✅"
-
-@app.route('/' + BOT_TOKEN, methods=['POST'])
-def webhook():
-    update = request.get_json()
-    bot.process_new_updates([telebot.types.Update.de_json(update)])
-    return "", 200
 
 # ================= COMMANDS =================
 @bot.message_handler(commands=['start'])
@@ -160,11 +121,10 @@ def start(msg):
     bot.reply_to(msg, "✅ Bot running\nUse /check")
 
 @bot.message_handler(commands=['check'])
-def manual_check(msg):
+def manual(msg):
     if msg.chat.id == ADMIN_CHAT_ID:
         bot.reply_to(msg, "🔄 Checking...")
         check_for_new_episodes()
-        bot.reply_to(msg, "✅ Done")
     else:
         bot.reply_to(msg, "❌ Not allowed")
 
@@ -175,31 +135,21 @@ def run_scheduler():
     scheduler.start()
     debug("🚀 Scheduler started")
 
-# ================= AUTO START =================
-def start_bot():
-    try:
-        debug("🚀 Starting bot (gunicorn mode)")
+# ================= START =================
+def start_all():
+    debug("🚀 Starting bot (polling mode)")
 
-        ensure_browser()
+    ensure_browser()
+    run_scheduler()
 
-        bot.remove_webhook()
-        time.sleep(1)
+    bot.remove_webhook()  # 🔥 IMPORTANT
+    debug("🔌 Starting polling...")
 
-        debug("🔗 Setting webhook...")
+    bot.infinity_polling()
 
-        RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
-        debug(f"🌍 URL: {RENDER_URL}")
+# ================= MAIN =================
+threading.Thread(target=start_all, daemon=True).start()
 
-        bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
-
-        debug("✅ Webhook set")
-
-        threading.Thread(target=run_scheduler, daemon=True).start()
-
-        debug("✅ Bot + Scheduler started")
-
-    except Exception as e:
-        debug(f"❌ Startup Error: {e}")
-
-# 🔥 IMPORTANT FOR GUNICORN
-start_bot()
+@app.route('/')
+def home():
+    return "Bot Running (Polling) ✅"
