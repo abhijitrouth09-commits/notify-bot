@@ -1,15 +1,15 @@
 import os
-import json
 import time
-import requests
-from bs4 import BeautifulSoup
+import json
+import re
+import threading
 from flask import Flask, request
 import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
-import threading
-import re
+from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
+# ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 
@@ -25,15 +25,30 @@ SHOWS = {
 
 DATA_FILE = "last_episodes.json"
 
+# ================= INIT =================
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-last_episodes = {}
+# ================= LOAD =================
+if os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "r") as f:
+        last_episodes = json.load(f)
+else:
+    last_episodes = {}
 
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump(last_episodes, f)
+
+# ================= PLAYWRIGHT =================
 def get_latest_episode(show_url):
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
+            )
+
             page = browser.new_page()
             page.goto(show_url, timeout=60000)
             page.wait_for_timeout(8000)
@@ -41,75 +56,98 @@ def get_latest_episode(show_url):
             html = page.content()
             soup = BeautifulSoup(html, "html.parser")
 
+            episodes = []
+
             for img in soup.find_all("img"):
                 title = img.get("title") or img.get("alt")
+
                 if title and "Episode" in title:
                     match = re.search(r"Episode\s*(\d+)", title)
                     if match:
-                        episode_text = f"E{match.group(1)}"
-                        browser.close()
-                        return episode_text
+                        episodes.append(int(match.group(1)))
 
             browser.close()
+
+            if episodes:
+                return f"E{max(episodes)}"
+
             return None
+
     except Exception as e:
-        print(f"Playwright Error: {e}")
+        print("Playwright Error:", e)
         return None
 
+# ================= CHECK =================
 def check_for_new_episodes():
-    global last_episodes
-    print(f"[{time.strftime('%H:%M:%S')}] Checking with Playwright...")
+    print("🔄 Checking episodes...")
 
-    for show_key, info in SHOWS.items():
+    for key, info in SHOWS.items():
         latest = get_latest_episode(info["url"])
+
         if not latest:
+            print(f"⚠️ No data for {info['name']}")
             continue
 
-        old = last_episodes.get(show_key)
+        old = last_episodes.get(key)
+
         if old != latest:
-            last_episodes[show_key] = latest
-            message = f"""🚨 **NEW EPISODE ALERT!** 🎉
+            last_episodes[key] = latest
+            save_data()
 
-📺 Show: {info["name"]}
-🎬 Latest: {latest}
+            msg = f"""🚨 *NEW EPISODE*
 
-🔥 [Watch Now]({info["url"]})"""
-            bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
-            print(f"✅ Alert sent for {info['name']}")
+📺 {info["name"]}
+🎬 {latest}
 
-@app.route('/', methods=['GET'])
+🔥 {info["url"]}
+"""
+            bot.send_message(ADMIN_CHAT_ID, msg, parse_mode="Markdown")
+            print(f"✅ Sent: {info['name']}")
+        else:
+            print(f"ℹ️ No update: {info['name']}")
+
+# ================= ROUTES =================
+@app.route('/')
 def home():
-    return "Playwright Bot Running ✅", 200
+    return "Playwright Bot Running ✅"
 
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def webhook():
     update = request.get_json()
     bot.process_new_updates([telebot.types.Update.de_json(update)])
-    return '', 200
+    return "", 200
 
+# ================= COMMANDS =================
 @bot.message_handler(commands=['start'])
-def start(message):
-    bot.reply_to(message, "✅ Playwright Bot is alive!\n\n/check → manual check")
+def start(msg):
+    bot.reply_to(msg, "✅ Bot running\nUse /check")
 
 @bot.message_handler(commands=['check'])
-def manual_check(message):
-    if message.chat.id == ADMIN_CHAT_ID:
-        bot.reply_to(message, "🔄 Checking with Playwright...")
+def manual_check(msg):
+    if msg.chat.id == ADMIN_CHAT_ID:
+        bot.reply_to(msg, "🔄 Checking...")
         check_for_new_episodes()
-        bot.reply_to(message, "✅ Check done!")
+        bot.reply_to(msg, "✅ Done")
     else:
-        bot.reply_to(message, "❌ Only owner can use.")
+        bot.reply_to(msg, "❌ Not allowed")
 
+# ================= SCHEDULER =================
 def run_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(check_for_new_episodes, 'interval', minutes=8)
+    scheduler.add_job(check_for_new_episodes, 'interval', minutes=10)
     scheduler.start()
-    print("🚀 Playwright scheduler started")
+    print("🚀 Scheduler started")
 
+# ================= MAIN =================
 if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(1)
-    bot.set_webhook(url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}")
+
+    bot.set_webhook(
+        url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
+    )
+
     threading.Thread(target=run_scheduler, daemon=True).start()
+
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
