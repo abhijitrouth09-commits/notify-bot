@@ -1,139 +1,85 @@
 import os
-import time
 import json
-import re
+import time
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask, request
 import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
 import threading
+import re
+from playwright.sync_api import sync_playwright
 
-# ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 
 SHOWS = {
-    "tumm-se-tumm-tak": {
-        "name": "Tumm Se Tum Tak",
-        "url": "https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/0-6-4z5727104"
-    }
+    "tumm-se-tumm-tak": {"name": "Tumm Se Tum Tak", "url": "https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/0-6-4z5727104"},
+    "saru": {"name": "Saru", "url": "https://www.zee5.com/tv-shows/details/saru/0-6-4z5727070"},
+    "vasudha": {"name": "Vasudha", "url": "https://www.zee5.com/tv-shows/details/vasudha/0-6-4z5612471"},
+    "jagadhatri": {"name": "Jagadhatri", "url": "https://www.zee5.com/tv-shows/details/jagadhatri/0-6-4z5853175"},
+    "lakshmi-nivas": {"name": "Lakshmi Nivas", "url": "https://www.zee5.com/tv-shows/details/lakshmi-nivas/0-6-4z5891598"},
+    "ganga-mai-ki-betiyan": {"name": "Ganga Mai Ki Betiyan", "url": "https://www.zee5.com/tv-shows/details/ganga-mai-ki-betiyan/0-6-4z5793364"},
+    "jaane-anjaane-hum-mile": {"name": "Jaane Anjaane Hum Mile", "url": "https://www.zee5.com/tv-shows/details/jaane-anjaane-hum-mile/0-6-4z5646159"}
 }
 
 DATA_FILE = "last_episodes.json"
 
-# ================= INIT =================
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ================= LOAD DATA =================
-if os.path.exists(DATA_FILE):
-    with open(DATA_FILE, "r") as f:
-        last_episodes = json.load(f)
-else:
-    last_episodes = {}
+last_episodes = {}
 
-def save_data():
-    with open(DATA_FILE, "w") as f:
-        json.dump(last_episodes, f)
-
-# ================= FETCH + PARSE =================
 def get_latest_episode(show_url):
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept-Language": "en-US,en;q=0.9"
-        }
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(show_url, timeout=60000)
+            page.wait_for_timeout(8000)
 
-        r = requests.get(show_url, headers=headers, timeout=15)
+            html = page.content()
+            soup = BeautifulSoup(html, "html.parser")
 
-        if r.status_code != 200:
-            return None, f"❌ Status {r.status_code}"
+            for img in soup.find_all("img"):
+                title = img.get("title") or img.get("alt")
+                if title and "Episode" in title:
+                    match = re.search(r"Episode\s*(\d+)", title)
+                    if match:
+                        episode_text = f"E{match.group(1)}"
+                        browser.close()
+                        return episode_text
 
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        images = soup.find_all("img")
-
-        episodes = []
-
-        for img in images:
-            title = img.get("title") or img.get("alt")
-
-            if title and "Episode" in title:
-                match = re.search(r"Episode\s*(\d+)", title)
-                if match:
-                    ep_num = int(match.group(1))
-                    src = img.get("src", "")
-
-                    id_match = re.search(r"/resources/([^/]+)/", src)
-                    ep_id = id_match.group(1) if id_match else None
-
-                    if ep_id:
-                        episodes.append({
-                            "num": ep_num,
-                            "id": ep_id,
-                            "title": title
-                        })
-
-        if not episodes:
-            return None, "❌ No episodes found"
-
-        latest = max(episodes, key=lambda x: x["num"])
-
-        ep_url = f"https://www.zee5.com/tv-shows/details/tumm-se-tumm-tak/{latest['id']}"
-
-        return {
-            "url": ep_url,
-            "num": latest["num"],
-            "title": latest["title"]
-        }, "✅ Found"
-
+            browser.close()
+            return None
     except Exception as e:
-        return None, f"❌ Error: {e}"
+        print(f"Playwright Error: {e}")
+        return None
 
-# ================= CHECK =================
-def check_for_new_episodes(debug_chat=None):
-    chat_id = debug_chat if debug_chat else ADMIN_CHAT_ID
+def check_for_new_episodes():
+    global last_episodes
+    print(f"[{time.strftime('%H:%M:%S')}] Checking with Playwright...")
 
-    bot.send_message(chat_id, "🔥 FUNCTION STARTED")
+    for show_key, info in SHOWS.items():
+        latest = get_latest_episode(info["url"])
+        if not latest:
+            continue
 
-    for key, info in SHOWS.items():
-        bot.send_message(chat_id, f"📺 Checking: {info['name']}")
+        old = last_episodes.get(show_key)
+        if old != latest:
+            last_episodes[show_key] = latest
+            message = f"""🚨 **NEW EPISODE ALERT!** 🎉
 
-        result, status = get_latest_episode(info["url"])
+📺 Show: {info["name"]}
+🎬 Latest: {latest}
 
-        bot.send_message(chat_id, f"🧾 Status: {status}")
+🔥 [Watch Now]({info["url"]})"""
+            bot.send_message(ADMIN_CHAT_ID, message, parse_mode='Markdown')
+            print(f"✅ Alert sent for {info['name']}")
 
-        if result:
-            bot.send_message(chat_id, f"🎬 Episode {result['num']}")
-            bot.send_message(chat_id, f"🔗 {result['url']}")
-
-            old = last_episodes.get(key)
-
-            if old != result["url"]:
-                last_episodes[key] = result["url"]
-                save_data()
-
-                msg = f"""🚨 *NEW EPISODE*
-
-📺 {info["name"]}
-🎬 Episode {result["num"]}
-
-🔥 [Watch Now]({result["url"]})
-"""
-                bot.send_message(ADMIN_CHAT_ID, msg, parse_mode="Markdown")
-                bot.send_message(chat_id, "✅ Alert sent")
-            else:
-                bot.send_message(chat_id, "ℹ️ No new episode")
-        else:
-            bot.send_message(chat_id, "⚠️ No result returned")
-
-    bot.send_message(chat_id, "✅ CHECK DONE")
-
-# ================= FLASK =================
 @app.route('/', methods=['GET'])
 def home():
-    return "Bot Running ✅", 200
+    return "Playwright Bot Running ✅", 200
 
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def webhook():
@@ -141,35 +87,29 @@ def webhook():
     bot.process_new_updates([telebot.types.Update.de_json(update)])
     return '', 200
 
-# ================= COMMANDS =================
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "✅ Bot running\nUse /check")
+    bot.reply_to(message, "✅ Playwright Bot is alive!\n\n/check → manual check")
 
 @bot.message_handler(commands=['check'])
 def manual_check(message):
     if message.chat.id == ADMIN_CHAT_ID:
-        bot.reply_to(message, "🔄 Checking...")
-        check_for_new_episodes(debug_chat=message.chat.id)
+        bot.reply_to(message, "🔄 Checking with Playwright...")
+        check_for_new_episodes()
+        bot.reply_to(message, "✅ Check done!")
     else:
-        bot.reply_to(message, "❌ Owner only")
+        bot.reply_to(message, "❌ Only owner can use.")
 
-# ================= SCHEDULER =================
 def run_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(check_for_new_episodes, 'interval', minutes=5)
+    scheduler.add_job(check_for_new_episodes, 'interval', minutes=8)
     scheduler.start()
+    print("🚀 Playwright scheduler started")
 
-# ================= MAIN =================
 if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(1)
-
-    bot.set_webhook(
-        url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
-    )
-
+    bot.set_webhook(url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}")
     threading.Thread(target=run_scheduler, daemon=True).start()
-
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
